@@ -1,0 +1,47 @@
+
+GET /api/tarjetas controllers.TarjetaControlador.list()
+GET /api/tarjetas/balance controllers.TarjetaControlador.balanceTarjeta()
+
+GET /api/personas controllers.PersonaControlador.list()
+
+GET /api/compras-credito controllers.ComprasCreditoControlador.list()
+GET /api/compras-credito/detalle/:id controllers.ComprasCreditoControlador.listById(id:Int)
+
+POST /api/compras-credito controllers.ComprasCreditoControlador.create()
+
+POST /api/recalcular-compra-credito controllers.ComprasCreditoControlador.recalcularCuotas()
+
+GET /api/compras-credito/:id controllers.CuotaDetalleControlador.listById(id:Int)
+
+GET /api/compras-credito/:id/responsables controllers.ResponsableCompraCreditoControlador.listByCompraCredito(id:Int)
+
+POST /api/compras-credito/responsables controllers.ResponsableCompraCreditoControlador.saveReponsableCredito()
+
+GET /api/prestamos controllers.PrestamoControlador.list()
+POST /api/prestamos controllers.PrestamoControlador.save()
+
+GET /api/tarjetas/pagos controllers.ComprasCreditoControlador.pagoTotalMesTarjeta()
+GET /api/tarjetas/pagos/:id controllers.ComprasCreditoControlador.pagoTotalMesTarjetaDetalle(id:Int)
+
+
+
+POST /api/compras-credito/pagar-productos controllers.ComprasCreditoControlador.pagarProductosTarjetaCredito()
+
+
+POST /api/compras-credito/ajustar-interes-compras/:id controllers.ComprasCreditoControlador.cambioEstadoAjusteInteres(id:Int)
+
+
+GET /api/pagos/personas controllers.ConsultasPagosControlador.listPagosMensualesPersona()
+
+GET /api/pagos/personas/:id controllers.ConsultasPagosControlador.ListPagosMensualesResponsableDetalle(id:Int)
+
+POST    /api/auth/login                 controllers.AuthController.login
+
+POST    /api/auth/register              controllers.AuthController.register()
+
+GET     /api/auth/callback/:provider    controllers.AuthController.oauthCallback(provider: String)
+POST    /api/auth/logout                controllers.AuthController.logout
+
+GET     /api/auth/token-is-valid    controllers.AuthController.tokenIsValid()
+
+
