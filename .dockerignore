@@ -1,0 +1,58 @@
+# ====================================
+# IGNORAR ARCHIVOS INNECESARIOS
+# ====================================
+
+# Directorios de build
+target/
+project/target/
+project/project/
+
+# Logs
+logs/
+*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.metals/
+.bloop/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Variables de entorno locales
+.env
+.env.local
+
+# Dependencias
+lib_managed/
+src_managed/
+project/boot/
+
+# Caché de SBT
+.sbt/
+.ivy2/
+
+# Archivos temporales
+*.swp
+*.bak
+*~
+
+# Documentación generada
+dist/
+
+# Testing
+test-reports/
+
+# Node (si tienes frontend)
+node_modules/
+npm-debug.log
+
+# Archivos de ejemplo que no deben ir a producción
+ejemplo_*.csv
+README*.md
+DOCUMENTACION*.md
+ARQUITECTURA*.md
+

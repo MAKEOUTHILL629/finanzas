@@ -1,3 +1,6 @@
+# ====================================
+# PLAY FRAMEWORK
+# ====================================
 logs
 target
 /.bsp
@@ -7,3 +10,78 @@ target
 /.project
 /.settings
 /RUNNING_PID
+
+# ====================================
+# SBT
+# ====================================
+project/target
+project/project/target
+dist
+.cache
+.history
+.lib/
+lib_managed/
+src_managed/
+project/boot/
+project/plugins/project/
+
+# ====================================
+# SCALA / IDE
+# ====================================
+*.class
+*.log
+.metals/
+.bloop/
+metals.sbt
+.vscode/
+*.iml
+.DS_Store
+
+# ====================================
+# DOCKER & AWS (IMPORTANTE)
+# ====================================
+.env
+.env.local
+.env.production
+.env.*.local
+*.pem
+*.key
+.aws/
+aws-credentials.txt
+
+# ====================================
+# LOGS Y TEMPORALES
+# ====================================
+logs/
+*.log
+*.swp
+*.bak
+*~
+.tmp/
+
+# ====================================
+# NODE (SI HAY FRONTEND)
+# ====================================
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# ====================================
+# ARCHIVOS DE EJEMPLO
+# ====================================
+ejemplo_*.csv
+
+# ====================================
+# BACKUPS Y DATOS
+# ====================================
+*.sql
+*.dump
+backups/
+
+# ====================================
+# SISTEMA OPERATIVO
+# ====================================
+Thumbs.db
+.DS_Store
+desktop.ini
+

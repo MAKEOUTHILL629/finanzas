@@ -13,7 +13,8 @@ libraryDependencies += "org.postgresql" % "postgresql" % "42.7.3"
 libraryDependencies += "org.scalatestplus.play" %% "scalatestplus-play" % "7.0.1" % Test
 libraryDependencies += "com.github.jwt-scala" %% "jwt-play-json" % "10.0.4"
 libraryDependencies += "org.mindrot" % "jbcrypt" % "0.4"
-libraryDependencies += "com.github.tototoshi" %% "scala-csv" % "1.3.10"
+libraryDependencies += "org.apache.commons" % "commons-csv" % "1.10.0"
+libraryDependencies += "org.jsoup" % "jsoup" % "1.17.2"
 
 
 // Adds additional packages into Twirl

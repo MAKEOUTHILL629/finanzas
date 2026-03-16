@@ -306,6 +306,20 @@ class CompraCreditoRepositorio @Inject()(
     }
   }(databaseExecutionContext)
 
+  def delete(id: Int): Future[Int] = Future {
+    db.withConnection { conn =>
+      val sql = "DELETE FROM public.\"ComprasCredito\" WHERE id = ?"
+      using(conn.prepareStatement(sql)) { statement =>
+        statement.setInt(1, id)
+        val affectedRows = statement.executeUpdate()
+        if (affectedRows == 0) {
+          throw new SQLException(s"Deleting CompraCredito with id $id failed, no rows affected.")
+        }
+        affectedRows
+      }
+    }
+  }(databaseExecutionContext)
+
   // Utility method to set parameters for PreparedStatement
   private def setCompraCreditoParameters(
                                           statement: PreparedStatement,

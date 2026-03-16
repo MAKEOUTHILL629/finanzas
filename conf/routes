@@ -1,6 +1,24 @@
+# Routes
+# This file defines all application routes (Higher priority routes first)
+# ~~~~
 
-GET /api/tarjetas controllers.TarjetaControlador.list()
-GET /api/tarjetas/balance controllers.TarjetaControlador.balanceTarjeta()
+# Home page y Health Check
+GET     /                           controllers.HomeController.index()
+GET     /health                 controllers.HomeController.health()
+
+# Swagger / OpenAPI Documentation
+GET     /api-docs                   controllers.SwaggerController.ui()
+GET     /api-docs/                  controllers.SwaggerController.ui()
+GET     /api-docs/openapi.yaml      controllers.Assets.at(path="/public/swagger", file="openapi.yaml")
+
+# Assets estáticos
+GET     /assets/*file               controllers.Assets.versioned(path="/public", file: Asset)
+
+# Tarjetas
+GET  /api/tarjetas                              controllers.TarjetaControlador.list()
+GET  /api/tarjetas/balance                      controllers.TarjetaControlador.balanceTarjeta()
+POST /api/tarjetas/actualizar-tasas             controllers.TarjetaControlador.actualizarTasas()
+POST /api/tarjetas/:id/actualizar-tasas         controllers.TarjetaControlador.actualizarTasasTarjeta(id: Int)
 
 GET /api/personas controllers.PersonaControlador.list()
 
@@ -9,6 +27,12 @@ GET /api/compras-credito/detalle/:id controllers.ComprasCreditoControlador.listB
 
 POST /api/compras-credito controllers.ComprasCreditoControlador.create()
 
+PUT /api/compras-credito controllers.ComprasCreditoControlador.update()
+
+DELETE /api/compras-credito/:id controllers.ComprasCreditoControlador.delete(id:Int)
+
+POST /api/compras-credito/upload-csv controllers.ComprasCreditoControlador.uploadCsv()
+
 POST /api/recalcular-compra-credito controllers.ComprasCreditoControlador.recalcularCuotas()
 
 GET /api/compras-credito/:id controllers.CuotaDetalleControlador.listById(id:Int)
@@ -16,6 +40,10 @@ GET /api/compras-credito/:id controllers.CuotaDetalleControlador.listById(id:Int
 GET /api/compras-credito/:id/responsables controllers.ResponsableCompraCreditoControlador.listByCompraCredito(id:Int)
 
 POST /api/compras-credito/responsables controllers.ResponsableCompraCreditoControlador.saveReponsableCredito()
+
+PUT /api/compras-credito/responsables controllers.ResponsableCompraCreditoControlador.update()
+
+DELETE /api/compras-credito/responsables/:id controllers.ResponsableCompraCreditoControlador.delete(id:Int)
 
 GET /api/prestamos controllers.PrestamoControlador.list()
 POST /api/prestamos controllers.PrestamoControlador.save()

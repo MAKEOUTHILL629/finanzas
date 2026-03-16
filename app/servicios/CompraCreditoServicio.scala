@@ -1,141 +1,3 @@
-//package servicios
-//
-//import modelo.CalculadoraAmortizacion.calcularAmortizacion
-//import modelo.CompraCredito
-//import percistencia.{CompraCreditoRepositorio, CuotaDetalleRepositorio}
-//
-//import java.time.{YearMonth, ZoneId}
-//import java.util.Date
-//import javax.inject.Inject
-//import scala.concurrent.ExecutionContext.Implicits.global
-//import scala.concurrent.{ExecutionContext, Future}
-//
-//
-//
-//class CompraCreditoServicio  @Inject()(compraCreditoRepositorio: CompraCreditoRepositorio, cuotaDetalleRepositorio: CuotaDetalleRepositorio) {
-//
-//
-//  def save(compraCredito: CompraCredito): Future[Int] =   {
-//
-//    // Convertir java.util.Date a LocalDate
-//    val fechaCompraLocal = compraCredito.fechaCompra.toInstant
-//      .atZone(ZoneId.systemDefault())
-//      .toLocalDate
-//
-//    // Determinar la fecha del primer pago
-//    val fechaPrimerPago = if (fechaCompraLocal.getDayOfMonth < 15) {
-//      // Si es antes del 15, el primer pago es este mes
-//      YearMonth.from(fechaCompraLocal).atEndOfMonth()
-//    } else {
-//      // Si es después del 15, el primer pago es el próximo mes
-//      YearMonth.from(fechaCompraLocal).plusMonths(1).atEndOfMonth()
-//    }
-//
-//    // Calcular la fecha de la última cuota
-//    val fechaUltimaCuota = fechaPrimerPago.plusMonths(compraCredito.numeroCuotas.toLong - 1)
-//
-//    // Calcular el pago mensual
-//    val pagoMensualBase = compraCredito.valorCompra / compraCredito.numeroCuotas
-//
-//
-//    val interesMensual = pagoMensualBase * (compraCredito.interes / 100)
-//    val pagoMensualTotal = pagoMensualBase + interesMensual
-//
-//    // Crear una nueva instancia de CompraCredito con los valores calculados
-//    compraCredito.copy(
-//      fechaUltimaCuota = java.sql.Date.valueOf(fechaUltimaCuota),
-//      pagoMensual = pagoMensualTotal
-//    )
-//
-//
-//    val id = compraCreditoRepositorio.save(compraCredito.copy(
-//      fechaUltimaCuota = java.sql.Date.valueOf(fechaUltimaCuota),
-//      pagoMensual = pagoMensualTotal
-//    ))
-//
-//    var ultimaCuotaLista = Date.from(fechaUltimaCuota.atStartOfDay(ZoneId.systemDefault()).toInstant);
-//
-//    id.map(id =>  {
-//      val amortizacion = calcularAmortizacion(compraCredito.valorCompra, compraCredito.interes, compraCredito.numeroCuotas, compraCredito.fechaCompra)
-//
-//      amortizacion.foreach(cuota =>{
-//
-//        cuotaDetalleRepositorio.save(cuota.copy(compra = id));
-//      })
-//
-//      amortizacion.lastOption.foreach(cuota => {
-//        ultimaCuotaLista = cuota.fechaPago;
-//      })
-//
-//
-//    })
-//
-//
-//
-//
-//
-//    id
-//  }
-//
-//
-//
-//  def recalcularCuotas(compraCredito: CompraCredito): Future[Int] = {
-//
-//
-//    val amortizacion = calcularAmortizacion(compraCredito.valorCompra, compraCredito.interes, compraCredito.numeroCuotas, compraCredito.fechaCompra)
-//    var ultimaCuota = compraCredito.fechaUltimaCuota;
-//
-//    amortizacion.find(_.numeroCuota == compraCredito.numeroCuotas).foreach(cuota => {
-//
-//      ultimaCuota = cuota.fechaPago;
-//    })
-//
-//    for {
-//      _ <- cuotaDetalleRepositorio.deleteByCompra(compraCredito.id)
-//      _ <- cuotaDetalleRepositorio.saveBatch(amortizacion.map(_.copy(compra = compraCredito.id)))
-//      updateResult <- compraCreditoRepositorio.update(compraCredito.copy(fechaUltimaCuota = ultimaCuota))
-//    } yield {
-//
-//      updateResult
-//    }
-//  }
-//
-//
-//  def cambioEstado(compraCredito: CompraCredito) = {
-//    compraCreditoRepositorio.listByEstadoPendiente().map(compras => {
-//
-//      compras.foreach(compra => {
-//        if(compra.fechaUltimaCuota.before(new java.util.Date())) {
-//
-//          compraCreditoRepositorio.update(compra.copy(estado = "Pagado"));
-//        }
-//      })
-//
-//    })
-//
-//
-//  }
-//
-//  def ajusteInteresTarjetaCredito(tarjetaId: Int): Unit = {
-//
-//    compraCreditoRepositorio.listByEstadoPendienteTarjeta(tarjetaId).map(compras => {
-//      compras.foreach(compra => {
-//        val amortizacion = calcularAmortizacion(compra.valorCompra, compra.interes, compra.numeroCuotas, compra.fechaCompra)
-//        cuotaDetalleRepositorio.deleteByCompra(compra.id).map(_ => {
-//          amortizacion.foreach(cuota => {
-//            cuotaDetalleRepositorio.save(cuota.copy(compra = compra.id))
-//          })
-//        })
-//      })
-//    })
-//
-//  }
-//
-//}
-//
-//
-
-
 package servicios
 import modelo.CalculadoraAmortizacion.calcularAmortizacion
 
@@ -144,11 +6,12 @@ import java.util.Date
 import javax.inject.Inject
 import scala.concurrent.{ExecutionContext, Future}
 import modelo.CompraCredito
-import percistencia.{CompraCreditoRepositorio, CuotaDetalleRepositorio, DatabaseExecutionContext}
+import percistencia.{CompraCreditoRepositorio, CuotaDetalleRepositorio, DatabaseExecutionContext, ResponsablesCompraCreditoRepositorio}
 
 class CompraCreditoServicio @Inject()(
                                        compraCreditoRepositorio: CompraCreditoRepositorio,
                                        cuotaDetalleRepositorio: CuotaDetalleRepositorio,
+                                       responsablesRepositorio: ResponsablesCompraCreditoRepositorio,
                                        databaseExecutionContext: DatabaseExecutionContext
                                      ) {
 
@@ -264,6 +127,21 @@ class CompraCreditoServicio @Inject()(
         } yield ()
       }
     } yield ()
+  }
+
+  def delete(compraCreditoId: Int): Future[Unit] = {
+    for {
+      _ <- responsablesRepositorio.deleteByCompraCredito(compraCreditoId)
+      _ <- cuotaDetalleRepositorio.deleteByCompra(compraCreditoId)
+      _ <- compraCreditoRepositorio.delete(compraCreditoId)
+    } yield ()
+  }
+
+  def updateCompra(compraCredito: CompraCredito): Future[Int] = {
+    for {
+      updateResult <- compraCreditoRepositorio.update(compraCredito)
+      _ <- recalcularCuotas(compraCredito)
+    } yield updateResult
   }
 }
 

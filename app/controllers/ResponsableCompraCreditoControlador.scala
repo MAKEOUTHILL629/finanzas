@@ -3,11 +3,11 @@ package controllers
 import modelo.{Persona, ResponsableCompraCredito}
 import percistencia.ResponsablesCompraCreditoRepositorio
 import play.api.libs.functional.syntax.toFunctionalBuilderOps
-import play.api.libs.json.{JsPath, Json, Reads, Writes}
+import play.api.libs.json.{JsPath, Json, Reads, Writes, JsSuccess, JsError}
 import play.api.mvc.{AbstractController, ControllerComponents}
 
 import javax.inject._
-import scala.concurrent.ExecutionContext
+import scala.concurrent.{ExecutionContext, Future}
 
 @Singleton
 class ResponsableCompraCreditoControlador @Inject()(
@@ -42,11 +42,52 @@ responsablesCompraCreditoRepositorio: ResponsablesCompraCreditoRepositorio
             ResponsableCompraCredito(0, null, persona, porcentajePago, cantidadPago, cantidadCuotas, compraCredito)
     )
 
-    def saveReponsableCredito() = Action.async { implicit request =>
-        val json = request.body.asJson.get
-        val responsable = json.as[ResponsableCompraCredito]
-        responsablesCompraCreditoRepositorio.save(responsable).map { responsable =>
-            Ok(Json.obj("message" -> "Responsable de compra a crédito creado exitosamente", "id" -> responsable.id))
+    implicit val responsableCreditoUpdateReads: Reads[ResponsableCompraCredito] = (
+        (JsPath \ "id").read[Int] and
+        (JsPath \ "persona").read[Int] and
+        (JsPath \ "porcentajePago").read[Float] and
+        (JsPath \ "cantidadPago").read[Float] and
+        (JsPath \ "cantidadCuotas").read[Int] and
+        (JsPath \ "compraCredito").read[Int]
+    )(
+        (id, persona, porcentajePago, cantidadPago, cantidadCuotas, compraCredito) =>
+            ResponsableCompraCredito(id, null, persona, porcentajePago, cantidadPago, cantidadCuotas, compraCredito)
+    )
+
+    def saveReponsableCredito() = Action(parse.json).async { implicit request =>
+        request.body.validate[ResponsableCompraCredito](reponsableCreditoReads) match {
+            case JsSuccess(responsable, _) =>
+                responsablesCompraCreditoRepositorio.save(responsable).map { responsable =>
+                    Ok(Json.obj("message" -> "Responsable de compra a crédito creado exitosamente", "id" -> responsable.id))
+                }.recover {
+                    case ex: Exception =>
+                        InternalServerError(Json.obj("message" -> s"Error al crear el responsable: ${ex.getMessage}"))
+                }
+            case JsError(errors) =>
+                Future.successful(BadRequest(Json.obj("message" -> "Datos inválidos", "errors" -> JsError.toJson(errors))))
+        }
+    }
+
+    def update() = Action(parse.json).async { implicit request =>
+        request.body.validate[ResponsableCompraCredito](responsableCreditoUpdateReads) match {
+            case JsSuccess(responsable, _) =>
+                responsablesCompraCreditoRepositorio.update(responsable).map { _ =>
+                    Ok(Json.obj("message" -> "Responsable actualizado exitosamente"))
+                }.recover {
+                    case ex: Exception =>
+                        InternalServerError(Json.obj("message" -> s"Error al actualizar el responsable: ${ex.getMessage}"))
+                }
+            case JsError(errors) =>
+                Future.successful(BadRequest(Json.obj("message" -> "Datos inválidos", "errors" -> JsError.toJson(errors))))
+        }
+    }
+
+    def delete(id: Int) = Action.async { implicit request =>
+        responsablesCompraCreditoRepositorio.delete(id).map { _ =>
+            Ok(Json.obj("message" -> "Responsable eliminado exitosamente"))
+        }.recover {
+            case ex: Exception =>
+                InternalServerError(Json.obj("message" -> s"Error al eliminar el responsable: ${ex.getMessage}"))
         }
     }
 }

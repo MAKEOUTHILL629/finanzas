@@ -52,4 +52,60 @@ class ResponsablesCompraCreditoRepositorio @Inject()(db: Database, databaseExecu
       responsableCompraCredito.copy(id = id)
     }
   }(databaseExecutionContext)
+
+  def deleteByCompraCredito(compraCreditoId: Int): Future[Int] = Future {
+    db.withConnection { conn =>
+      val sql = "DELETE FROM public.\"ResponsablesComprasCredito\" WHERE compra_credito = ?"
+      val statement = conn.prepareStatement(sql)
+      try {
+        statement.setInt(1, compraCreditoId)
+        statement.executeUpdate()
+      } finally {
+        statement.close()
+      }
+    }
+  }(databaseExecutionContext)
+
+  def delete(id: Int): Future[Int] = Future {
+    db.withConnection { conn =>
+      val sql = "DELETE FROM public.\"ResponsablesComprasCredito\" WHERE id = ?"
+      val statement = conn.prepareStatement(sql)
+      try {
+        statement.setInt(1, id)
+        val affectedRows = statement.executeUpdate()
+        if (affectedRows == 0) {
+          throw new Exception(s"No se encontró el responsable con ID $id")
+        }
+        affectedRows
+      } finally {
+        statement.close()
+      }
+    }
+  }(databaseExecutionContext)
+
+  def update(responsable: ResponsableCompraCredito): Future[Int] = Future {
+    db.withConnection { conn =>
+      val sql = """
+        UPDATE public."ResponsablesComprasCredito"
+        SET persona = ?, porcentaje_pago = ?, cantidad_pago = ?, cantidad_cuotas = ?
+        WHERE id = ?
+      """
+      val statement = conn.prepareStatement(sql)
+      try {
+        statement.setInt(1, responsable.persona)
+        statement.setFloat(2, responsable.porcentajePago)
+        statement.setFloat(3, responsable.cantidadPago)
+        statement.setInt(4, responsable.cantidadCuotas)
+        statement.setInt(5, responsable.id)
+
+        val affectedRows = statement.executeUpdate()
+        if (affectedRows == 0) {
+          throw new Exception(s"No se encontró el responsable con ID ${responsable.id}")
+        }
+        affectedRows
+      } finally {
+        statement.close()
+      }
+    }
+  }(databaseExecutionContext)
 }
