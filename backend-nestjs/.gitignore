@@ -6,3 +6,5 @@ coverage
 .env.production
 *.log
 .DS_Store
+
+.env.vercel
