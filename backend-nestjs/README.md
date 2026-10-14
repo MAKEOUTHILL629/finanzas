@@ -1,0 +1,108 @@
+# Finanzas API — NestJS
+
+Migración del microservicio Scala (Play Framework) a **NestJS + Prisma + Supabase (PostgreSQL)**.
+Mantiene el contrato HTTP legacy (`/api/*`) para que Angular funcione sin cambios y añade el ERP financiero (cuentas, transacciones,
+correos bancarios, recurrentes, obligaciones, sub-ledger y analítica) bajo `/api/*`. Los nombres antiguos `/api/v2/*` siguen
+funcionando como alias (ver `MIGRATION_INVENTORY.md` §3).
+
+> Documentos de referencia: [`MIGRATION_INVENTORY.md`](MIGRATION_INVENTORY.md) (rutas, discrepancias y hallazgos) ·
+> `../base de datos-documentacion.md` (esquema, triggers y SPs de Supabase).
+
+## Arranque rápido
+
+```bash
+cp .env.example .env        # completar DATABASE_URL, DIRECT_URL, JWT_SECRET (= APP_SECRET de Play), WEBHOOK_SECRET y DEFAULT_OWNER_USER_ID
+npm install
+npm run prisma:generate
+npm run start:dev           # http://localhost:9000  ·  Swagger: /api/docs  ·  legacy: /api-docs
+```
+
+| Script | Qué hace |
+|---|---|
+| `npm run build` | `prisma generate` + compilación TypeScript (0 errores) |
+| `npm test` | Pruebas unitarias + e2e HTTP con Prisma mockeado (**sin BD**) |
+| `npm run test:integration` | Pruebas contra **PostgreSQL real** con triggers y SPs (ver abajo) |
+| `npm run openapi:export` | Genera `openapi-generated.json` para `openapi-generator-cli` (Angular) |
+
+## Correos de Bancolombia (`POST /api/notificaciones-correo/sync-batch`)
+
+El Google Apps Script envía los correos parseados por lotes. Autenticación: header `x-webhook-secret` = `WEBHOOK_SECRET`
+(actúa como el usuario `DEFAULT_OWNER_USER_ID`) **o** un JWT normal.
+
+```bash
+curl -X POST http://localhost:9000/api/notificaciones-correo/sync-batch   -H "x-webhook-secret: $WEBHOOK_SECRET" -H "Content-Type: application/json"   -d '{"items":[{"externalMessageId":"<abc@mail.gmail.com>","fecha":"2026-10-13","hora":"14:02:11","tipo":"Compra",
+       "metodo":"Tarjeta Credito","comercio":"EXITO","origenRaw":"T.Cred *1927","valor":"50.000","moneda":"COP"}]}'
+```
+
+- **Idempotente**: `INSERT ... ON CONFLICT (external_message_id) DO NOTHING`. Reenviar un lote no duplica nada; `syncedExternalIds`
+  incluye nuevos **y** ya existentes para que el script los marque como sincronizados. Un ítem que falla se revierte solo y
+  aparece en `errores` (no en `syncedExternalIds`), sin afectar a los demás.
+- **Ruteo**: Compra/Avance con tarjeta de crédito → `ComprasCredito` a 1 cuota (notificación `PENDIENTE` para asignar
+  cuotas/responsables); Ingreso/Pago proveedor → `INGRESO` confirmado; Transferencia/Pago/Retiro/Compra débito → `EGRESO`
+  confirmado; Pago de tarjeta → `PAGO_TARJETA` (el débito y el "abono" del mismo pago, ±5 min y mismo monto, producen **una** sola
+  transacción); avisos informativos → `IGNORADO`. Lo que no se puede resolver queda `PENDIENTE` con el `motivo` en `datos_parseados`.
+- **Cómo se identifican los productos**: los últimos 4 dígitos del correo se buscan en `CuentasFinancieras.ultimos_4_digitos`
+  (admite varios valores: `"3698,4278"`, p. ej. cuenta + tarjeta débito) y en `Tarjetas.descripcion`/`franquicia`
+  (no existe columna de últimos 4 en `Tarjetas`: escribirlos en la descripción, p. ej. `Visa Oro *1927`).
+- Conciliación desde Angular: `PATCH /api/notificaciones-correo/:id/conciliar` (confirmar, descartar, cambiar `numeroCuotas`,
+  asignar `responsables`, indicar `cuentaId`/`tarjetaId`, `convertirEnPrestamo`). Todo en una sola transacción de BD.
+
+## Angular en local
+
+```bash
+# 1) backend                                  # 2) frontend (otro terminal)
+cd backend-nestjs && npm run start:dev        cd ../finanzas-mf && npm install && npm start
+```
+
+`finanzas-mf/proxy.conf.json` reenvía `/api/*` a `http://localhost:9000/api`; Angular usa `apiUrl = '/api'` (mismo origen, sin CORS).
+Con `npm run build:docker` el frontend llama directo a `http://localhost:9000/api` (CORS ya permite `localhost:4200/3000`).
+Las fechas "de calendario" se serializan como epoch-ms a las 00:00 **UTC**; el frontend las formatea en UTC
+(`shared/date-only.helper.ts` y `formatoFecha`) para no mostrar el día anterior en Colombia (UTC-5).
+
+## Reglas de diseño (inquebrantables)
+
+1. **Dinero con `Decimal`**, nunca `number` (`decimal.js`, precisión 20, `ROUND_HALF_UP`; montos a 2 y tasas/TRM a 4 decimales). `number` solo aparece en la frontera JSON.
+2. **`JsonSerializationInterceptor`** convierte `BigInt` (int8) y `Decimal` (numeric) a `number` para Angular.
+3. **No se duplica la lógica de la BD**: los 8 triggers y los SPs (`sp_*`) hacen los asientos. NestJS nunca escribe `CuentasFinancieras.saldo_actual` ni inserta en `MovimientosDeudaPersona`.
+4. **Recalcular cuotas** (`ComprasCreditoService.reemplazarCuotas`): mismo nº de cuotas → `UPDATE` (el Trigger 8 sincroniza); distinto → borra asientos, recrea cuotas y re-dispara el Trigger 6.
+5. **Multi-tenant**: todo se filtra/asigna por `owner_user_id` = `userId` del JWT (`@CurrentUser('userId')`).
+6. **Paridad legacy**: mismas rutas, verbos, códigos (200 en POST, 201 solo en `register`, 204 en `logout`), cuerpos de error y formatos de fecha (epoch ms / `MM/dd/yyyy` / `yyyy-MM-ddTHH:mm:ss`).
+
+## Estructura
+
+```
+prisma/schema.prisma     22 tablas + 2 vistas (nombres idénticos a la BD)
+src/common/              guard JWT, interceptor, filtro, enums, utilidades (calculadora, fechas, Decimal)
+src/modules/             auth, personas, tarjetas, compras-credito, consultas-pagos, prestamos, home (legacy)
+                         cuentas-financieras, transacciones, notificaciones-correo, gastos-recurrentes,
+                         obligaciones-aportes, subledger-deudas (ERP)
+test/                    *.spec.ts (unitarias) · e2e/ (HTTP) · integration/ (PostgreSQL real)
+```
+
+## Autenticación
+
+JWT HS256 con los mismos claims que Scala (`userId`, `email`, `role`, `name`, `iss="Finanzas Makes"`, `iat`, `exp`) y el mismo
+secreto (`JWT_SECRET`, o `APP_SECRET` como respaldo) → **las sesiones activas de Angular siguen siendo válidas**.
+Los hashes `bcrypt` de jBCrypt (`$2a$`) son compatibles.
+
+## Pruebas de integración con PostgreSQL real
+
+`npm run test:integration` reconstruye el esquema desde `schema.prisma` y aplica los triggers/vistas/SPs de
+`base de datos-documentacion.md` (secciones 4, 8, 10 y 11). **Es destructivo** (`DROP SCHEMA public`), por eso el arnés
+se niega a correr salvo contra `localhost` y una base cuyo nombre contenga `test`.
+
+```bash
+docker run -d --name pg-test -p 5432:5432 -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=finanzas_test postgres:17
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/finanzas_test npm run test:integration
+```
+
+Sin `TEST_DATABASE_URL` esas suites se omiten (`npm test` no las necesita).
+
+## Docker / AWS
+
+```bash
+docker build -t finanzas-api-nestjs .        # multi-stage, node:22-alpine, usuario no-root, tini, HEALTHCHECK /health
+docker compose up --build                    # lee .env, expone 9000
+```
+
+Puerto `9000` y `GET /health` idénticos a la app Play ⇒ reemplazo directo en ELB/ECS. Variables: ver `.env.example`.

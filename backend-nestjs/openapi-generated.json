@@ -1,0 +1,4077 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/auth/login": {
+      "post": {
+        "operationId": "AuthController_login",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Iniciar sesión (devuelve JWT HS256)",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "operationId": "AuthController_register",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Registrar nuevo usuario",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/auth/callback/{provider}": {
+      "get": {
+        "operationId": "AuthController_oauthCallback",
+        "parameters": [
+          {
+            "name": "provider",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Callback OAuth (no implementado, 501)",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "AuthController_logout",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Cerrar sesión (204, requiere JWT válido)",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/auth/token-is-valid": {
+      "get": {
+        "operationId": "AuthController_tokenIsValid",
+        "parameters": [
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Validar token JWT",
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/": {
+      "get": {
+        "operationId": "HomeController_index",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "HomeController_health",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/api/personas": {
+      "get": {
+        "operationId": "PersonasController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Personas"
+        ]
+      }
+    },
+    "/api/tarjetas": {
+      "get": {
+        "operationId": "TarjetasController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Tarjetas"
+        ]
+      }
+    },
+    "/api/tarjetas/balance": {
+      "get": {
+        "operationId": "TarjetasController_balance",
+        "parameters": [
+          {
+            "name": "year",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "mes",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Tarjetas"
+        ]
+      }
+    },
+    "/api/tarjetas/actualizar-tasas": {
+      "post": {
+        "operationId": "TarjetasController_actualizarTasas",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Tarjetas"
+        ]
+      }
+    },
+    "/api/tarjetas/{id}/actualizar-tasas": {
+      "post": {
+        "operationId": "TarjetasController_actualizarTasasTarjeta",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Tarjetas"
+        ]
+      }
+    },
+    "/api/tarjetas/resumen-mensual": {
+      "get": {
+        "operationId": "TarjetasV2Controller_resumenMensual",
+        "parameters": [
+          {
+            "name": "periodo",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-10"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Resumen mensual por tarjeta: lo tuyo vs. lo de terceros + componente USD (consulta 7.3)",
+        "tags": [
+          "Tarjetas v2"
+        ]
+      }
+    },
+    "/api/tarjetas/{id}/pagar-extracto": {
+      "post": {
+        "operationId": "TarjetasV2Controller_pagarExtracto",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PagarExtractoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Paga el extracto de una tarjeta (SELECT sp_pagar_extracto_tarjeta)",
+        "tags": [
+          "Tarjetas v2"
+        ]
+      }
+    },
+    "/api/compras-credito/{id}/responsables": {
+      "get": {
+        "operationId": "ResponsablesController_listByCompra",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Responsables"
+        ]
+      }
+    },
+    "/api/compras-credito/responsables": {
+      "post": {
+        "operationId": "ResponsablesController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateResponsableDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Responsables"
+        ]
+      },
+      "put": {
+        "operationId": "ResponsablesController_update",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateResponsableDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Responsables"
+        ]
+      }
+    },
+    "/api/compras-credito/responsables/{id}": {
+      "delete": {
+        "operationId": "ResponsablesController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Responsables"
+        ]
+      }
+    },
+    "/api/compras-credito": {
+      "get": {
+        "operationId": "ComprasCreditoController_list",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Listar compras a crédito del usuario",
+        "tags": [
+          "Compras Crédito"
+        ]
+      },
+      "post": {
+        "operationId": "ComprasCreditoController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCompraCreditoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Crear compra a crédito y generar su tabla de cuotas",
+        "tags": [
+          "Compras Crédito"
+        ]
+      },
+      "put": {
+        "operationId": "ComprasCreditoController_update",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCompraCreditoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Actualizar compra y recalcular cuotas",
+        "tags": [
+          "Compras Crédito"
+        ]
+      }
+    },
+    "/api/compras-credito/detalle/{id}": {
+      "get": {
+        "operationId": "ComprasCreditoController_detalle",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Compras Crédito"
+        ]
+      }
+    },
+    "/api/compras-credito/{id}": {
+      "put": {
+        "operationId": "ComprasCreditoController_updateById",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActualizarCompraCreditoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Actualizar compra por id en la ruta y recalcular cuotas",
+        "tags": [
+          "Compras Crédito"
+        ]
+      },
+      "delete": {
+        "operationId": "ComprasCreditoController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Eliminar compra en cascada (sub-ledger, responsables, cuotas, compra)",
+        "tags": [
+          "Compras Crédito"
+        ]
+      },
+      "get": {
+        "operationId": "CuotasDetalleController_listByCompra",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Cuotas"
+        ]
+      }
+    },
+    "/api/compras-credito/upload-csv": {
+      "post": {
+        "operationId": "ComprasCreditoController_uploadCsv",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "file"
+                ],
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Carga masiva de compras desde CSV (devuelve el CSV con columna Resultado)",
+        "tags": [
+          "Compras Crédito"
+        ]
+      }
+    },
+    "/api/compras-credito/pagar-productos": {
+      "post": {
+        "operationId": "ComprasCreditoController_pagarProductos",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Compras Crédito"
+        ]
+      }
+    },
+    "/api/compras-credito/ajustar-interes-compras/{id}": {
+      "post": {
+        "operationId": "ComprasCreditoController_ajustarInteres",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Ajuste de interés de las compras pendientes de una tarjeta",
+        "tags": [
+          "Compras Crédito"
+        ]
+      }
+    },
+    "/api/recalcular-compra-credito": {
+      "post": {
+        "operationId": "ComprasCreditoController_recalcular",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCompraCreditoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Recalcular cuotas de una compra (devuelve filas afectadas)",
+        "tags": [
+          "Compras Crédito"
+        ]
+      }
+    },
+    "/api/tarjetas/pagos": {
+      "get": {
+        "operationId": "PagosTarjetaController_pagoTotalMes",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Tarjetas"
+        ]
+      }
+    },
+    "/api/tarjetas/pagos/{id}": {
+      "get": {
+        "operationId": "PagosTarjetaController_detalle",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "year",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "mes",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Tarjetas"
+        ]
+      }
+    },
+    "/api/compras-credito/{id}/confirmar-trm": {
+      "patch": {
+        "description": "Recalcula las cuotas aún no pagadas; el Trigger 8 sincroniza automáticamente MovimientosDeudaPersona.",
+        "operationId": "ComprasCreditoV2Controller_confirmarTrm",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmarTrmDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Confirma la TRM real de una compra en divisa (SELECT sp_actualizar_trm_compra_usd)",
+        "tags": [
+          "Compras Crédito v2"
+        ]
+      }
+    },
+    "/api/pagos/personas": {
+      "get": {
+        "operationId": "ConsultasPagosController_listPagosMensualesPersona",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Pagos"
+        ]
+      }
+    },
+    "/api/pagos/personas/{id}": {
+      "get": {
+        "operationId": "ConsultasPagosController_detalleResponsable",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "year",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "mes",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Pagos"
+        ]
+      }
+    },
+    "/api/prestamos": {
+      "get": {
+        "operationId": "PrestamosController_list",
+        "parameters": [
+          {
+            "name": "estado",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "Pendiente",
+                "Pagado",
+                "Anulado"
+              ]
+            }
+          },
+          {
+            "name": "direccion",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "POR_COBRAR",
+                "POR_PAGAR"
+              ]
+            }
+          },
+          {
+            "name": "corteId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "responsableId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Préstamos"
+        ]
+      },
+      "post": {
+        "operationId": "PrestamosController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePrestamoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Préstamos"
+        ]
+      }
+    },
+    "/api/prestamos/{id}": {
+      "get": {
+        "operationId": "PrestamosV2Controller_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Préstamos v2"
+        ]
+      },
+      "patch": {
+        "operationId": "PrestamosV2Controller_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePrestamoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Actualiza estado/saldo/método/corte. Pasar a 'Pagado' dispara el abono vía Trigger 4",
+        "tags": [
+          "Préstamos v2"
+        ]
+      }
+    },
+    "/api/prestamos/{id}/aprobaciones": {
+      "get": {
+        "operationId": "PrestamosV2Controller_aprobaciones",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Préstamos v2"
+        ]
+      },
+      "patch": {
+        "operationId": "PrestamosV2Controller_resolverPorPersona",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolverAprobacionPorPersonaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Aprueba o rechaza la aprobación pendiente de una persona sobre el préstamo",
+        "tags": [
+          "Préstamos v2"
+        ]
+      }
+    },
+    "/api/prestamos/{id}/aprobaciones/{aprobacionId}": {
+      "patch": {
+        "operationId": "PrestamosV2Controller_resolverAprobacion",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "aprobacionId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolverAprobacionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Aprobar o rechazar (con comentarios y fecha) una aprobación de préstamo",
+        "tags": [
+          "Préstamos v2"
+        ]
+      }
+    },
+    "/api/cortes-cobro": {
+      "get": {
+        "operationId": "CortesCobroController_list",
+        "parameters": [
+          {
+            "name": "estado",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": [
+                "PASADO",
+                "ACTIVO",
+                "FUTURO"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Cortes de cobro"
+        ]
+      },
+      "post": {
+        "operationId": "CortesCobroController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCorteCobroDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Cortes de cobro"
+        ]
+      }
+    },
+    "/api/cortes-cobro/activo": {
+      "get": {
+        "operationId": "CortesCobroController_activo",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Corte vigente según la fecha de hoy",
+        "tags": [
+          "Cortes de cobro"
+        ]
+      }
+    },
+    "/api/cortes-cobro/{id}": {
+      "put": {
+        "operationId": "CortesCobroController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCorteCobroDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Cortes de cobro"
+        ]
+      },
+      "delete": {
+        "operationId": "CortesCobroController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Cortes de cobro"
+        ]
+      }
+    },
+    "/api/cuentas-financieras": {
+      "get": {
+        "operationId": "CuentasFinancierasController_list",
+        "parameters": [
+          {
+            "name": "soloActivas",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Cuentas financieras"
+        ]
+      },
+      "post": {
+        "operationId": "CuentasFinancierasController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCuentaFinancieraDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Crea una cuenta; saldo_actual solo se inicializa aquí (luego lo mantiene el Trigger 2)",
+        "tags": [
+          "Cuentas financieras"
+        ]
+      }
+    },
+    "/api/cuentas-financieras/{id}": {
+      "get": {
+        "operationId": "CuentasFinancierasController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Cuentas financieras"
+        ]
+      },
+      "put": {
+        "operationId": "CuentasFinancierasController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCuentaFinancieraDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Edita la cuenta (saldo_actual NO es editable: lo mantiene el Trigger 2)",
+        "tags": [
+          "Cuentas financieras"
+        ]
+      },
+      "delete": {
+        "operationId": "CuentasFinancierasController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Cuentas financieras"
+        ]
+      }
+    },
+    "/api/categorias": {
+      "get": {
+        "operationId": "CategoriasController_list",
+        "parameters": [
+          {
+            "name": "tipo",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": [
+                "INGRESO",
+                "EGRESO",
+                "AMBOS"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Categorías del sistema + las personalizadas del usuario",
+        "tags": [
+          "Categorías"
+        ]
+      },
+      "post": {
+        "operationId": "CategoriasController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCategoriaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Categorías"
+        ]
+      }
+    },
+    "/api/categorias/{id}": {
+      "put": {
+        "operationId": "CategoriasController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCategoriaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Categorías"
+        ]
+      },
+      "delete": {
+        "operationId": "CategoriasController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Categorías"
+        ]
+      }
+    },
+    "/api/transacciones": {
+      "get": {
+        "operationId": "TransaccionesController_list",
+        "parameters": [
+          {
+            "name": "periodo",
+            "required": false,
+            "in": "query",
+            "description": "Mes completo (YYYY-MM). Tiene prioridad sobre desde/hasta.",
+            "schema": {
+              "example": "2026-10",
+              "type": "string"
+            }
+          },
+          {
+            "name": "tipo_transaccion",
+            "required": false,
+            "in": "query",
+            "description": "Alias de `tipo`",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "INGRESO",
+                "EGRESO",
+                "TRANSFERENCIA",
+                "PAGO_TARJETA",
+                "PAGO_PRESTAMO",
+                "REEMBOLSO_TERCERO"
+              ]
+            }
+          },
+          {
+            "name": "cuenta_id",
+            "required": false,
+            "in": "query",
+            "description": "Alias de `cuentaId`",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "categoria_id",
+            "required": false,
+            "in": "query",
+            "description": "Alias de `categoriaId`",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "origen_registro",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "MANUAL",
+                "EMAIL_AUTO",
+                "MIGRACION"
+              ]
+            }
+          },
+          {
+            "name": "desde",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "2026-10-01",
+              "type": "string"
+            }
+          },
+          {
+            "name": "hasta",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "2026-10-31",
+              "type": "string"
+            }
+          },
+          {
+            "name": "cuentaId",
+            "required": false,
+            "in": "query",
+            "description": "Cuenta de origen o de destino",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "categoriaId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "tipo",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "INGRESO",
+                "EGRESO",
+                "TRANSFERENCIA",
+                "PAGO_TARJETA",
+                "PAGO_PRESTAMO",
+                "REEMBOLSO_TERCERO"
+              ]
+            }
+          },
+          {
+            "name": "estado",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDIENTE_REVISION",
+                "CONFIRMADO",
+                "ANULADO"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "maximum": 500,
+              "default": 100,
+              "type": "number"
+            }
+          },
+          {
+            "name": "offset",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 0,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Libro diario filtrado por fechas, cuenta, categoría, tipo y estado (paginado)",
+        "tags": [
+          "Transacciones"
+        ]
+      },
+      "post": {
+        "description": "El saldo de las cuentas lo ajusta el Trigger 2 solo cuando estado = CONFIRMADO. Una TRANSFERENCIA es una sola fila que afecta ambas cuentas.",
+        "operationId": "TransaccionesController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTransaccionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Registra un ingreso, egreso, transferencia, pago de tarjeta/préstamo o reembolso",
+        "tags": [
+          "Transacciones"
+        ]
+      }
+    },
+    "/api/transacciones/{id}": {
+      "get": {
+        "operationId": "TransaccionesController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Transacciones"
+        ]
+      },
+      "put": {
+        "operationId": "TransaccionesController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTransaccionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Edita la transacción (el Trigger 2 revierte el impacto anterior y aplica el nuevo)",
+        "tags": [
+          "Transacciones"
+        ]
+      },
+      "delete": {
+        "operationId": "TransaccionesController_anular",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Anula la transacción (estado ANULADO); el Trigger 2 revierte el saldo",
+        "tags": [
+          "Transacciones"
+        ]
+      }
+    },
+    "/api/notificaciones-correo": {
+      "get": {
+        "operationId": "NotificacionesCorreoController_list",
+        "parameters": [
+          {
+            "name": "estado",
+            "required": false,
+            "in": "query",
+            "description": "Alias: estado_procesamiento",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDIENTE",
+                "CONCILIADO",
+                "IGNORADO",
+                "ERROR"
+              ]
+            }
+          },
+          {
+            "name": "estado_procesamiento",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDIENTE",
+                "CONCILIADO",
+                "IGNORADO",
+                "ERROR"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Bandeja de conciliación (filtro por estado_procesamiento)",
+        "tags": [
+          "Notificaciones de correo"
+        ]
+      }
+    },
+    "/api/notificaciones-correo/sync-batch": {
+      "post": {
+        "description": "Cada ítem se procesa en su propia transacción. `syncedExternalIds` lista los ya persistidos (nuevos + ya existentes); los que fallaron por un error transitorio van en `errores` y NO en `syncedExternalIds`, para que el script los reintente.",
+        "operationId": "NotificacionesCorreoController_sync",
+        "parameters": [
+          {
+            "name": "x-webhook-secret",
+            "in": "header",
+            "description": "Alternativa al JWT para el Apps Script",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncNotificacionesBatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Sincronización por lotes de correos de Bancolombia (idempotente por external_message_id)",
+        "tags": [
+          "Notificaciones de correo"
+        ]
+      }
+    },
+    "/api/notificaciones-correo/ingesta": {
+      "post": {
+        "description": "Si datos_parseados.ultimos_4 identifica una única cuenta, crea la transacción PENDIENTE_REVISION (EMAIL_AUTO).",
+        "operationId": "NotificacionesCorreoController_ingesta",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestaCorreoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Ingesta idempotente de UN correo (ON CONFLICT (external_message_id) DO NOTHING)",
+        "tags": [
+          "Notificaciones de correo"
+        ]
+      }
+    },
+    "/api/notificaciones-correo/{id}": {
+      "get": {
+        "operationId": "NotificacionesCorreoController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Notificaciones de correo"
+        ]
+      }
+    },
+    "/api/notificaciones-correo/{id}/conciliar": {
+      "patch": {
+        "operationId": "NotificacionesCorreoController_conciliar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConciliarCorreoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Concilia una notificación: cuotas, responsables, categoría, egreso→préstamo, o descartar",
+        "tags": [
+          "Notificaciones de correo"
+        ]
+      }
+    },
+    "/api/recurrentes/plantillas": {
+      "get": {
+        "operationId": "PlantillasRecurrentesController_list",
+        "parameters": [
+          {
+            "name": "soloActivas",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Gastos recurrentes"
+        ]
+      },
+      "post": {
+        "operationId": "PlantillasRecurrentesController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePlantillaRecurrenteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Crea una plantilla recurrente con su reparto entre participantes",
+        "tags": [
+          "Gastos recurrentes"
+        ]
+      }
+    },
+    "/api/recurrentes/plantillas/{id}": {
+      "get": {
+        "operationId": "PlantillasRecurrentesController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Gastos recurrentes"
+        ]
+      },
+      "put": {
+        "operationId": "PlantillasRecurrentesController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePlantillaRecurrenteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Edita la plantilla; si se envía `responsables` se reemplaza todo el reparto",
+        "tags": [
+          "Gastos recurrentes"
+        ]
+      },
+      "delete": {
+        "operationId": "PlantillasRecurrentesController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Elimina la plantilla (o la desactiva si ya tiene periodos generados)",
+        "tags": [
+          "Gastos recurrentes"
+        ]
+      }
+    },
+    "/api/recurrentes/periodos": {
+      "get": {
+        "operationId": "PeriodosRecurrentesController_list",
+        "parameters": [
+          {
+            "name": "periodo",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "2026-11",
+              "type": "string"
+            }
+          },
+          {
+            "name": "estado",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Gastos recurrentes"
+        ]
+      }
+    },
+    "/api/recurrentes/periodos/{id}/pagar": {
+      "patch": {
+        "operationId": "PeriodosRecurrentesController_registrarPago",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrarPagoPeriodoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Registra el pago real; PAGADO/FACTURADO dispara el Trigger 7 (cargo proporcional a cada participante)",
+        "tags": [
+          "Gastos recurrentes"
+        ]
+      }
+    },
+    "/api/recurrentes/proyectar-mes": {
+      "post": {
+        "operationId": "ProyeccionRecurrentesController_proyectarMes",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProyectarPeriodoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Proyecta el mes: promedio móvil de 3 pagos reales (variables) o monto base (fijos). Idempotente.",
+        "tags": [
+          "Gastos recurrentes"
+        ]
+      }
+    },
+    "/api/obligaciones-mes": {
+      "get": {
+        "operationId": "ObligacionesAportesController_list",
+        "parameters": [
+          {
+            "name": "periodo",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "2026-09",
+              "type": "string"
+            }
+          },
+          {
+            "name": "tipo",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": [
+                "CUOTA_CARRO",
+                "CUOTA_CASA",
+                "OTRO"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Resumen de obligaciones (vista vw_ResumenObligacionesMes)",
+        "tags": [
+          "Obligaciones y aportes"
+        ]
+      },
+      "post": {
+        "operationId": "ObligacionesAportesController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateObligacionMesDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Obligaciones y aportes"
+        ]
+      }
+    },
+    "/api/obligaciones-mes/{id}/resumen": {
+      "get": {
+        "operationId": "ObligacionesAportesController_resumen",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "meta_mensual, aporte_total_real, restante_real, directo vs. por cruces y estado_calculado",
+        "tags": [
+          "Obligaciones y aportes"
+        ]
+      }
+    },
+    "/api/obligaciones-mes/{id}/dias": {
+      "get": {
+        "operationId": "ObligacionesAportesController_dias",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Días de aporte (vw_AportesDiaResumen) con el desglose de AportesDetalle y Personas",
+        "tags": [
+          "Obligaciones y aportes"
+        ]
+      }
+    },
+    "/api/obligaciones-mes/{id}/aportes-dia": {
+      "post": {
+        "operationId": "ObligacionesAportesController_registrar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrarAportesDiaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Registra los aportes de un día. El aporte de un tercero crea el préstamo por cruce vía Trigger 3",
+        "tags": [
+          "Obligaciones y aportes"
+        ]
+      }
+    },
+    "/api/cruces-deuda": {
+      "get": {
+        "operationId": "SubledgerDeudasController_listCruces",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Sub-ledger de deudas"
+        ]
+      },
+      "post": {
+        "operationId": "SubledgerDeudasController_crearCruce",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCruceDeudaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Cruce triangular de deuda; el Trigger 5 genera los asientos -1 y +1",
+        "tags": [
+          "Sub-ledger de deudas"
+        ]
+      }
+    },
+    "/api/personas/{id}/abonar": {
+      "post": {
+        "operationId": "SubledgerDeudasController_abonar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AbonarPersonaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Registra el pago/reembolso de una persona (SELECT sp_registrar_abono_persona)",
+        "tags": [
+          "Sub-ledger de deudas"
+        ]
+      }
+    },
+    "/api/ledger/estado-cuenta": {
+      "get": {
+        "operationId": "SubledgerDeudasController_estadoCuenta",
+        "parameters": [
+          {
+            "name": "periodo",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-10"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Estado de cuenta consolidado por persona a fin de mes (consulta 7.1)",
+        "tags": [
+          "Sub-ledger de deudas"
+        ]
+      }
+    },
+    "/api/ledger/personas/{personaId}/extracto": {
+      "get": {
+        "operationId": "SubledgerDeudasController_extracto",
+        "parameters": [
+          {
+            "name": "personaId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "periodo",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-10"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Extracto detallado de una persona en un mes (consulta 7.2)",
+        "tags": [
+          "Sub-ledger de deudas"
+        ]
+      }
+    },
+    "/api/analytics/flujo-caja": {
+      "get": {
+        "operationId": "SubledgerDeudasController_flujoCaja",
+        "parameters": [
+          {
+            "name": "periodo",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-10"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Pronóstico de flujo de caja mensual: ingresos vs. tarjetas + recurrentes + obligaciones (7.4)",
+        "tags": [
+          "Sub-ledger de deudas"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Finanzas API",
+    "description": "API de finanzas personales y familiares (compras a crédito, tarjetas, préstamos, cuentas, transacciones, gastos recurrentes, obligaciones y sub-ledger de deudas). Rutas `/api/*` = contrato legacy (Play). Rutas `/api/v2/*` = ERP financiero (Supabase).",
+    "version": "2.0.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http"
+      }
+    },
+    "schemas": {
+      "PagarExtractoDto": {
+        "type": "object",
+        "properties": {
+          "cuentaOrigenId": {
+            "type": "number",
+            "example": 3,
+            "description": "Cuenta financiera desde la que sale el dinero"
+          },
+          "periodo": {
+            "type": "string",
+            "example": "2026-10",
+            "description": "Periodo del extracto (YYYY-MM)"
+          },
+          "montoPagado": {
+            "type": "object",
+            "example": "1250000.50",
+            "description": "Monto pagado (máx. 2 decimales; número o texto)"
+          }
+        },
+        "required": [
+          "cuentaOrigenId",
+          "periodo",
+          "montoPagado"
+        ]
+      },
+      "CreateResponsableDto": {
+        "type": "object",
+        "properties": {
+          "persona": {
+            "type": "number",
+            "example": 2,
+            "description": "ID de la persona responsable"
+          },
+          "porcentajePago": {
+            "type": "object",
+            "example": 50,
+            "description": "Porcentaje que asume (0-100)"
+          },
+          "cantidadPago": {
+            "type": "object",
+            "example": 42500
+          },
+          "cantidadCuotas": {
+            "type": "number",
+            "example": 36
+          },
+          "compraCredito": {
+            "type": "number",
+            "example": 1
+          }
+        },
+        "required": [
+          "persona",
+          "porcentajePago",
+          "cantidadPago",
+          "cantidadCuotas",
+          "compraCredito"
+        ]
+      },
+      "UpdateResponsableDto": {
+        "type": "object",
+        "properties": {
+          "persona": {
+            "type": "number",
+            "example": 2,
+            "description": "ID de la persona responsable"
+          },
+          "porcentajePago": {
+            "type": "object",
+            "example": 50,
+            "description": "Porcentaje que asume (0-100)"
+          },
+          "cantidadPago": {
+            "type": "object",
+            "example": 42500
+          },
+          "cantidadCuotas": {
+            "type": "number",
+            "example": 36
+          },
+          "compraCredito": {
+            "type": "number",
+            "example": 1
+          },
+          "id": {
+            "type": "number",
+            "example": 3
+          }
+        },
+        "required": [
+          "persona",
+          "porcentajePago",
+          "cantidadPago",
+          "cantidadCuotas",
+          "compraCredito",
+          "id"
+        ]
+      },
+      "CreateCompraCreditoDto": {
+        "type": "object",
+        "properties": {
+          "concepto": {
+            "type": "string",
+            "example": "Nevera Samsung"
+          },
+          "valorCompra": {
+            "type": "number",
+            "example": 2500000,
+            "description": "Valor en COP. Obligatorio si la moneda es COP."
+          },
+          "fechaCompra": {
+            "type": "string",
+            "example": "2024-04-05",
+            "description": "Formato yyyy-MM-dd (se ignora cualquier sufijo, como el legacy)"
+          },
+          "numeroCuotas": {
+            "type": "number",
+            "example": 36
+          },
+          "interes": {
+            "type": "number",
+            "example": 1.8895,
+            "description": "Interés mensual en %"
+          },
+          "descripcion": {
+            "type": "string",
+            "example": "Compra en tienda Éxito"
+          },
+          "estado": {
+            "type": "string",
+            "example": "Pendiente"
+          },
+          "tarjeta": {
+            "type": "number",
+            "example": 1,
+            "description": "ID de la tarjeta"
+          },
+          "monedaOriginal": {
+            "type": "string",
+            "example": "USD",
+            "description": "Por defecto 'COP'"
+          },
+          "valorMonedaOriginal": {
+            "type": "number",
+            "example": 49.99,
+            "description": "Monto en la divisa original (obligatorio si no es COP)"
+          },
+          "tasaCambioAplicada": {
+            "type": "number",
+            "example": 4200,
+            "description": "TRM aplicada (obligatoria si no es COP)"
+          },
+          "trmConfirmada": {
+            "type": "boolean",
+            "example": false
+          }
+        },
+        "required": [
+          "concepto",
+          "fechaCompra",
+          "numeroCuotas",
+          "interes",
+          "descripcion",
+          "estado",
+          "tarjeta"
+        ]
+      },
+      "UpdateCompraCreditoDto": {
+        "type": "object",
+        "properties": {
+          "concepto": {
+            "type": "string",
+            "example": "Nevera Samsung"
+          },
+          "valorCompra": {
+            "type": "number",
+            "example": 2500000,
+            "description": "Valor en COP. Obligatorio si la moneda es COP."
+          },
+          "fechaCompra": {
+            "type": "string",
+            "example": "2024-04-05",
+            "description": "Formato yyyy-MM-dd (se ignora cualquier sufijo, como el legacy)"
+          },
+          "numeroCuotas": {
+            "type": "number",
+            "example": 36
+          },
+          "interes": {
+            "type": "number",
+            "example": 1.8895,
+            "description": "Interés mensual en %"
+          },
+          "descripcion": {
+            "type": "string",
+            "example": "Compra en tienda Éxito"
+          },
+          "estado": {
+            "type": "string",
+            "example": "Pendiente"
+          },
+          "tarjeta": {
+            "type": "number",
+            "example": 1,
+            "description": "ID de la tarjeta"
+          },
+          "monedaOriginal": {
+            "type": "string",
+            "example": "USD",
+            "description": "Por defecto 'COP'"
+          },
+          "valorMonedaOriginal": {
+            "type": "number",
+            "example": 49.99,
+            "description": "Monto en la divisa original (obligatorio si no es COP)"
+          },
+          "tasaCambioAplicada": {
+            "type": "number",
+            "example": 4200,
+            "description": "TRM aplicada (obligatoria si no es COP)"
+          },
+          "trmConfirmada": {
+            "type": "boolean",
+            "example": false
+          },
+          "id": {
+            "type": "number",
+            "example": 5
+          }
+        },
+        "required": [
+          "concepto",
+          "fechaCompra",
+          "numeroCuotas",
+          "interes",
+          "descripcion",
+          "estado",
+          "tarjeta",
+          "id"
+        ]
+      },
+      "ActualizarCompraCreditoDto": {
+        "type": "object",
+        "properties": {
+          "concepto": {
+            "type": "string",
+            "example": "Nevera Samsung"
+          },
+          "valorCompra": {
+            "type": "number",
+            "example": 2500000,
+            "description": "Valor en COP. Obligatorio si la moneda es COP."
+          },
+          "fechaCompra": {
+            "type": "string",
+            "example": "2024-04-05",
+            "description": "Formato yyyy-MM-dd (se ignora cualquier sufijo, como el legacy)"
+          },
+          "numeroCuotas": {
+            "type": "number",
+            "example": 36
+          },
+          "interes": {
+            "type": "number",
+            "example": 1.8895,
+            "description": "Interés mensual en %"
+          },
+          "descripcion": {
+            "type": "string",
+            "example": "Compra en tienda Éxito"
+          },
+          "estado": {
+            "type": "string",
+            "example": "Pendiente"
+          },
+          "tarjeta": {
+            "type": "number",
+            "example": 1,
+            "description": "ID de la tarjeta"
+          },
+          "monedaOriginal": {
+            "type": "string",
+            "example": "USD",
+            "description": "Por defecto 'COP'"
+          },
+          "valorMonedaOriginal": {
+            "type": "number",
+            "example": 49.99,
+            "description": "Monto en la divisa original (obligatorio si no es COP)"
+          },
+          "tasaCambioAplicada": {
+            "type": "number",
+            "example": 4200,
+            "description": "TRM aplicada (obligatoria si no es COP)"
+          },
+          "trmConfirmada": {
+            "type": "boolean",
+            "example": false
+          }
+        },
+        "required": [
+          "concepto",
+          "fechaCompra",
+          "numeroCuotas",
+          "interes",
+          "descripcion",
+          "estado",
+          "tarjeta"
+        ]
+      },
+      "ConfirmarTrmDto": {
+        "type": "object",
+        "properties": {
+          "nuevaTrm": {
+            "type": "object",
+            "example": "4150.00",
+            "description": "TRM real de facturación (número o texto, hasta 4 decimales)"
+          },
+          "confirmarDefinitivo": {
+            "type": "boolean",
+            "example": true,
+            "description": "true (default) = TRM definitiva"
+          }
+        },
+        "required": [
+          "nuevaTrm"
+        ]
+      },
+      "CreatePrestamoDto": {
+        "type": "object",
+        "properties": {
+          "valorPrestado": {
+            "type": "object",
+            "example": 500000
+          },
+          "concepto": {
+            "type": "string",
+            "example": "Préstamo para viaje"
+          },
+          "fechaCobro": {
+            "type": "string",
+            "example": "2024-06-01",
+            "description": "Fecha estimada de pago (yyyy-MM-dd; se ignora cualquier sufijo, como el legacy)"
+          },
+          "responsable": {
+            "type": "number",
+            "example": 2,
+            "description": "ID de la persona deudora"
+          },
+          "estado": {
+            "type": "string",
+            "example": "Pendiente"
+          },
+          "comentarios": {
+            "type": "string",
+            "example": ""
+          },
+          "direccionPrestamo": {
+            "type": "string",
+            "enum": [
+              "POR_COBRAR",
+              "POR_PAGAR"
+            ],
+            "description": "Por defecto 'POR_COBRAR'"
+          },
+          "fechaPrestamo": {
+            "type": "string",
+            "example": "2024-05-20",
+            "description": "Fecha real del préstamo (default: hoy)"
+          },
+          "metodo": {
+            "type": "string",
+            "enum": [
+              "Nequi",
+              "Fisico",
+              "Pago Fernando",
+              "Prestamo Fernando",
+              "Domicilio",
+              "Otros"
+            ]
+          },
+          "corteId": {
+            "type": "number",
+            "description": "Corte de cobro; si se omite se busca el corte activo"
+          },
+          "esRecurrenteMensual": {
+            "type": "boolean"
+          },
+          "cuotaMensualAcordada": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "valorPrestado",
+          "concepto",
+          "fechaCobro",
+          "responsable",
+          "estado",
+          "comentarios"
+        ]
+      },
+      "UpdatePrestamoDto": {
+        "type": "object",
+        "properties": {
+          "estado": {
+            "type": "string",
+            "enum": [
+              "Pendiente",
+              "Pagado",
+              "Anulado"
+            ]
+          },
+          "saldoPendiente": {
+            "type": "number",
+            "description": "Saldo pendiente tras abonos parciales"
+          },
+          "comentarios": {
+            "type": "string"
+          },
+          "metodo": {
+            "type": "string",
+            "enum": [
+              "Nequi",
+              "Fisico",
+              "Pago Fernando",
+              "Prestamo Fernando",
+              "Domicilio",
+              "Otros"
+            ]
+          },
+          "corteId": {
+            "type": "number"
+          },
+          "fechaCobro": {
+            "type": "string",
+            "example": "2024-06-01"
+          }
+        }
+      },
+      "ResolverAprobacionPorPersonaDto": {
+        "type": "object",
+        "properties": {
+          "aprobacionId": {
+            "type": "number",
+            "description": "Aprobación concreta (opcional)"
+          },
+          "personaId": {
+            "type": "number",
+            "description": "Persona que aprueba (default: la persona enlazada a tu usuario)"
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "Aprobado",
+              "Rechazado"
+            ]
+          },
+          "comentarios": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "estado"
+        ]
+      },
+      "ResolverAprobacionDto": {
+        "type": "object",
+        "properties": {
+          "estado": {
+            "type": "string",
+            "enum": [
+              "Aprobado",
+              "Rechazado"
+            ]
+          },
+          "comentarios": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "estado"
+        ]
+      },
+      "CreateCorteCobroDto": {
+        "type": "object",
+        "properties": {
+          "concepto": {
+            "type": "string",
+            "example": "Octubre 2026"
+          },
+          "fechaInicio": {
+            "type": "string",
+            "example": "2026-10-08"
+          },
+          "fechaFinal": {
+            "type": "string",
+            "example": "2026-11-07"
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "PASADO",
+              "ACTIVO",
+              "FUTURO"
+            ]
+          }
+        },
+        "required": [
+          "concepto",
+          "fechaInicio",
+          "fechaFinal"
+        ]
+      },
+      "UpdateCorteCobroDto": {
+        "type": "object",
+        "properties": {
+          "concepto": {
+            "type": "string"
+          },
+          "fechaInicio": {
+            "type": "string"
+          },
+          "fechaFinal": {
+            "type": "string"
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "PASADO",
+              "ACTIVO",
+              "FUTURO"
+            ]
+          }
+        }
+      },
+      "CreateCuentaFinancieraDto": {
+        "type": "object",
+        "properties": {
+          "nombre": {
+            "type": "string",
+            "example": "Bancolombia Ahorros"
+          },
+          "tipoCuenta": {
+            "type": "string",
+            "enum": [
+              "AHORROS",
+              "CORRIENTE",
+              "BILLETERA_DIGITAL",
+              "EFECTIVO"
+            ]
+          },
+          "bancoEntidad": {
+            "type": "string",
+            "example": "Bancolombia"
+          },
+          "ultimos4Digitos": {
+            "type": "string",
+            "example": "1234",
+            "description": "Usado por el parser de correos para identificar la cuenta"
+          },
+          "moneda": {
+            "type": "string",
+            "example": "COP",
+            "description": "Por defecto 'COP'"
+          },
+          "saldoInicial": {
+            "type": "object",
+            "example": 1500000,
+            "description": "Saldo con el que se abre la cuenta. Después solo lo modifica el Trigger 2 de la BD."
+          }
+        },
+        "required": [
+          "nombre",
+          "tipoCuenta"
+        ]
+      },
+      "UpdateCuentaFinancieraDto": {
+        "type": "object",
+        "properties": {
+          "nombre": {
+            "type": "string"
+          },
+          "tipoCuenta": {
+            "type": "string",
+            "enum": [
+              "AHORROS",
+              "CORRIENTE",
+              "BILLETERA_DIGITAL",
+              "EFECTIVO"
+            ]
+          },
+          "bancoEntidad": {
+            "type": "string"
+          },
+          "ultimos4Digitos": {
+            "type": "string"
+          },
+          "isActive": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CreateCategoriaDto": {
+        "type": "object",
+        "properties": {
+          "nombre": {
+            "type": "string",
+            "example": "Mercado"
+          },
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "INGRESO",
+              "EGRESO",
+              "AMBOS"
+            ]
+          },
+          "icono": {
+            "type": "string",
+            "example": "shopping-cart"
+          },
+          "color": {
+            "type": "string",
+            "example": "#3B82F6"
+          }
+        },
+        "required": [
+          "nombre",
+          "tipo"
+        ]
+      },
+      "UpdateCategoriaDto": {
+        "type": "object",
+        "properties": {
+          "nombre": {
+            "type": "string"
+          },
+          "tipo": {
+            "type": "string",
+            "enum": [
+              "INGRESO",
+              "EGRESO",
+              "AMBOS"
+            ]
+          },
+          "icono": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateTransaccionDto": {
+        "type": "object",
+        "properties": {
+          "tipoTransaccion": {
+            "type": "string",
+            "enum": [
+              "INGRESO",
+              "EGRESO",
+              "TRANSFERENCIA",
+              "PAGO_TARJETA",
+              "PAGO_PRESTAMO",
+              "REEMBOLSO_TERCERO"
+            ]
+          },
+          "cuentaOrigenId": {
+            "type": "number",
+            "description": "Obligatoria en EGRESO, PAGO_TARJETA, PAGO_PRESTAMO y TRANSFERENCIA"
+          },
+          "cuentaDestinoId": {
+            "type": "number",
+            "description": "Obligatoria en INGRESO, REEMBOLSO_TERCERO y TRANSFERENCIA"
+          },
+          "tarjetaPagadaId": {
+            "type": "number",
+            "description": "Obligatoria en PAGO_TARJETA"
+          },
+          "categoriaId": {
+            "type": "number"
+          },
+          "fechaTransaccion": {
+            "type": "string",
+            "example": "2026-10-13T15:30:00-05:00",
+            "description": "Por defecto: ahora"
+          },
+          "concepto": {
+            "type": "string",
+            "example": "Mercado Éxito"
+          },
+          "monedaOriginal": {
+            "type": "string",
+            "example": "COP"
+          },
+          "montoOriginal": {
+            "type": "object",
+            "example": "150000.50",
+            "description": "Monto en la divisa original (> 0, máx. 2 decimales; número o texto)"
+          },
+          "tasaCambio": {
+            "type": "object",
+            "example": "4150.1234",
+            "description": "TRM / tasa de conversión a COP. Obligatoria si la divisa no es COP"
+          },
+          "montoCop": {
+            "type": "object",
+            "description": "Se calcula como montoOriginal × tasaCambio si se omite"
+          },
+          "origenRegistro": {
+            "type": "string",
+            "enum": [
+              "MANUAL",
+              "EMAIL_AUTO",
+              "MIGRACION"
+            ]
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "PENDIENTE_REVISION",
+              "CONFIRMADO",
+              "ANULADO"
+            ],
+            "description": "Default: CONFIRMADO (manual) / PENDIENTE_REVISION (email)"
+          },
+          "notas": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tipoTransaccion",
+          "concepto",
+          "montoOriginal"
+        ]
+      },
+      "UpdateTransaccionDto": {
+        "type": "object",
+        "properties": {
+          "tipoTransaccion": {
+            "type": "string",
+            "enum": [
+              "INGRESO",
+              "EGRESO",
+              "TRANSFERENCIA",
+              "PAGO_TARJETA",
+              "PAGO_PRESTAMO",
+              "REEMBOLSO_TERCERO"
+            ]
+          },
+          "cuentaOrigenId": {
+            "type": "object",
+            "nullable": true
+          },
+          "cuentaDestinoId": {
+            "type": "object",
+            "nullable": true
+          },
+          "tarjetaPagadaId": {
+            "type": "object",
+            "nullable": true
+          },
+          "categoriaId": {
+            "type": "object",
+            "nullable": true
+          },
+          "fechaTransaccion": {
+            "type": "string"
+          },
+          "concepto": {
+            "type": "string"
+          },
+          "montoOriginal": {
+            "type": "object"
+          },
+          "tasaCambio": {
+            "type": "object"
+          },
+          "montoCop": {
+            "type": "object"
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "PENDIENTE_REVISION",
+              "CONFIRMADO",
+              "ANULADO"
+            ]
+          },
+          "notas": {
+            "type": "string"
+          }
+        }
+      },
+      "NotificacionItemDto": {
+        "type": "object",
+        "properties": {
+          "externalMessageId": {
+            "type": "string",
+            "description": "Message-ID de Gmail. Clave de idempotencia estricta.",
+            "example": "<CAF123@mail.gmail.com>"
+          },
+          "fecha": {
+            "type": "string",
+            "example": "2026-10-13",
+            "description": "YYYY-MM-DD (hora local del buzón)"
+          },
+          "hora": {
+            "type": "string",
+            "example": "14:02:11",
+            "description": "HH:mm:ss"
+          },
+          "tipo": {
+            "type": "string",
+            "example": "Compra"
+          },
+          "metodo": {
+            "type": "string",
+            "example": "Tarjeta Credito"
+          },
+          "comercio": {
+            "type": "string",
+            "example": "EXITO COLOMBIA"
+          },
+          "origenRaw": {
+            "type": "string",
+            "example": "T.Cred *1927",
+            "description": "Producto de origen tal cual lo reporta el banco"
+          },
+          "valor": {
+            "type": "object",
+            "example": "50.000",
+            "description": "Valor tal cual lo reporta el banco (texto o número)"
+          },
+          "moneda": {
+            "type": "string",
+            "enum": [
+              "COP",
+              "USD"
+            ],
+            "default": "COP"
+          },
+          "linkCorreo": {
+            "type": "string"
+          },
+          "asunto": {
+            "type": "string"
+          },
+          "cuerpoExtraido": {
+            "type": "string"
+          },
+          "esErrorParsing": {
+            "type": "boolean",
+            "description": "true si el script no pudo interpretar el correo"
+          }
+        },
+        "required": [
+          "externalMessageId",
+          "fecha",
+          "hora",
+          "tipo",
+          "metodo"
+        ]
+      },
+      "SyncNotificacionesBatchDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotificacionItemDto"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "IngestaCorreoDto": {
+        "type": "object",
+        "properties": {
+          "external_message_id": {
+            "type": "string",
+            "description": "Message-ID de Gmail/IMAP. Garantiza idempotencia absoluta."
+          },
+          "remitente": {
+            "type": "string",
+            "example": "alertas@bancolombia.com.co"
+          },
+          "asunto": {
+            "type": "string"
+          },
+          "fecha_correo": {
+            "type": "string",
+            "example": "2026-10-13T14:02:11Z"
+          },
+          "cuerpo_extraido": {
+            "type": "string"
+          },
+          "datos_parseados": {
+            "type": "object",
+            "example": {
+              "comercio": "EXITO",
+              "monto": 50000,
+              "moneda": "COP",
+              "ultimos_4": "1234",
+              "instrumento": "CUENTA",
+              "tipo": "EGRESO"
+            },
+            "description": "JSON estructurado por el parser. `ultimos_4` identifica la cuenta; `tipo` (INGRESO|EGRESO) opcional."
+          }
+        },
+        "required": [
+          "external_message_id",
+          "fecha_correo"
+        ]
+      },
+      "ResponsableConciliacionDto": {
+        "type": "object",
+        "properties": {
+          "personaId": {
+            "type": "number",
+            "description": "Persona que asume parte de la compra"
+          },
+          "porcentajePago": {
+            "type": "object",
+            "example": 50,
+            "description": "Porcentaje (0-100) que asume"
+          },
+          "cantidadCuotas": {
+            "type": "number",
+            "description": "Cuotas que asume (default: todas las de la compra)"
+          }
+        },
+        "required": [
+          "personaId",
+          "porcentajePago"
+        ]
+      },
+      "ConvertirEnPrestamoDto": {
+        "type": "object",
+        "properties": {
+          "responsableId": {
+            "type": "number",
+            "description": "Persona que debe el dinero (deudor)"
+          },
+          "fechaCobro": {
+            "type": "string",
+            "example": "2026-11-15",
+            "description": "Fecha estimada de cobro (default: la fecha del egreso)"
+          },
+          "comentarios": {
+            "type": "string"
+          },
+          "metodo": {
+            "type": "string",
+            "enum": [
+              "Nequi",
+              "Fisico",
+              "Pago Fernando",
+              "Prestamo Fernando",
+              "Domicilio",
+              "Otros"
+            ]
+          }
+        },
+        "required": [
+          "responsableId"
+        ]
+      },
+      "ConciliarCorreoDto": {
+        "type": "object",
+        "properties": {
+          "accion": {
+            "type": "string",
+            "enum": [
+              "CONFIRMAR",
+              "DESCARTAR"
+            ],
+            "default": "CONFIRMAR"
+          },
+          "categoriaId": {
+            "type": "number",
+            "description": "Categoría a asignar a la transacción"
+          },
+          "cuentaId": {
+            "type": "number",
+            "description": "Cuenta a usar si la ingesta no pudo identificarla por los últimos 4 dígitos (genera la transacción)"
+          },
+          "concepto": {
+            "type": "string",
+            "description": "Corrige el concepto detectado (transacción o compra)"
+          },
+          "monto": {
+            "type": "object",
+            "description": "Corrige el monto (COP) detectado"
+          },
+          "notas": {
+            "type": "string"
+          },
+          "numeroCuotas": {
+            "type": "number",
+            "description": "Compra de TC importada: nuevo número de cuotas (recalcula CuotasDetalle)"
+          },
+          "tarjetaId": {
+            "type": "number",
+            "description": "Tarjeta a usar si la ingesta no la identificó (crea la compra a 1 cuota)"
+          },
+          "responsables": {
+            "description": "Responsables de la compra (Trigger 6 imputa el sub-ledger)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResponsableConciliacionDto"
+            }
+          },
+          "convertirEnPrestamo": {
+            "description": "Convierte el egreso en un préstamo POR_COBRAR",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConvertirEnPrestamoDto"
+              }
+            ]
+          }
+        }
+      },
+      "ResponsableRecurrenteDto": {
+        "type": "object",
+        "properties": {
+          "personaId": {
+            "type": "number",
+            "description": "Persona responsable. null = tu propia cuota parte"
+          },
+          "porcentajeParticipacion": {
+            "type": "object",
+            "example": 25,
+            "description": "Porcentaje (0-100)"
+          },
+          "montoFijoParticipacion": {
+            "type": "object",
+            "example": 50000,
+            "description": "Valor fijo si el acuerdo no es porcentual"
+          }
+        }
+      },
+      "CreatePlantillaRecurrenteDto": {
+        "type": "object",
+        "properties": {
+          "nombre": {
+            "type": "string",
+            "example": "Mercado Casa"
+          },
+          "categoriaId": {
+            "type": "number"
+          },
+          "frecuencia": {
+            "type": "string",
+            "enum": [
+              "SEMANAL",
+              "QUINCENAL",
+              "MENSUAL",
+              "ANUAL"
+            ]
+          },
+          "diaVencimientoEstimado": {
+            "type": "number",
+            "example": 15,
+            "minimum": 1,
+            "maximum": 31
+          },
+          "esMontoVariable": {
+            "type": "boolean",
+            "description": "true si cambia cada mes (energía, mercado)"
+          },
+          "moneda": {
+            "type": "string",
+            "example": "COP"
+          },
+          "montoBaseEstimado": {
+            "type": "object",
+            "example": 800000
+          },
+          "cuentaDebitoDefaultId": {
+            "type": "number"
+          },
+          "tarjetaCreditoDefaultId": {
+            "type": "number"
+          },
+          "prestamoAsociadoId": {
+            "type": "number"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "responsables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResponsableRecurrenteDto"
+            }
+          }
+        },
+        "required": [
+          "nombre",
+          "montoBaseEstimado"
+        ]
+      },
+      "UpdatePlantillaRecurrenteDto": {
+        "type": "object",
+        "properties": {
+          "nombre": {
+            "type": "string"
+          },
+          "categoriaId": {
+            "type": "object",
+            "nullable": true
+          },
+          "frecuencia": {
+            "type": "string",
+            "enum": [
+              "SEMANAL",
+              "QUINCENAL",
+              "MENSUAL",
+              "ANUAL"
+            ]
+          },
+          "diaVencimientoEstimado": {
+            "type": "number"
+          },
+          "esMontoVariable": {
+            "type": "boolean"
+          },
+          "montoBaseEstimado": {
+            "type": "object"
+          },
+          "cuentaDebitoDefaultId": {
+            "type": "object",
+            "nullable": true
+          },
+          "tarjetaCreditoDefaultId": {
+            "type": "object",
+            "nullable": true
+          },
+          "prestamoAsociadoId": {
+            "type": "object",
+            "nullable": true
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "responsables": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResponsableRecurrenteDto"
+            }
+          }
+        }
+      },
+      "RegistrarPagoPeriodoDto": {
+        "type": "object",
+        "properties": {
+          "montoRealPagado": {
+            "type": "object",
+            "example": "845300.50",
+            "description": "Monto real pagado"
+          },
+          "estado": {
+            "type": "string",
+            "enum": [
+              "PAGADO",
+              "FACTURADO"
+            ],
+            "description": "Por defecto 'PAGADO'. Ambos disparan el Trigger 7 (cargo a cada participante)."
+          },
+          "cuentaOrigenId": {
+            "type": "number",
+            "description": "Crea la transacción EGRESO desde esta cuenta (default: cuenta de débito de la plantilla)"
+          },
+          "crearTransaccion": {
+            "type": "boolean",
+            "description": "true = registra el EGRESO en Transacciones y lo enlaza"
+          },
+          "transaccionPagoId": {
+            "type": "number",
+            "description": "Enlaza una transacción ya existente"
+          },
+          "compraCreditoPagoId": {
+            "type": "number",
+            "description": "Enlaza la compra con tarjeta con la que se pagó"
+          }
+        },
+        "required": [
+          "montoRealPagado"
+        ]
+      },
+      "ProyectarPeriodoDto": {
+        "type": "object",
+        "properties": {
+          "periodo": {
+            "type": "string",
+            "example": "2026-11"
+          }
+        },
+        "required": [
+          "periodo"
+        ]
+      },
+      "CreateObligacionMesDto": {
+        "type": "object",
+        "properties": {
+          "tipoObligacion": {
+            "type": "string",
+            "enum": [
+              "CUOTA_CARRO",
+              "CUOTA_CASA",
+              "OTRO"
+            ]
+          },
+          "responsablePrincipalId": {
+            "type": "number",
+            "description": "Persona responsable de cubrir la meta (p. ej. el papá)"
+          },
+          "concepto": {
+            "type": "string",
+            "example": "Septiembre 2026"
+          },
+          "periodo": {
+            "type": "string",
+            "example": "2026-09"
+          },
+          "metaMensual": {
+            "type": "object",
+            "example": "1810000.00"
+          },
+          "fechaInicio": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "fechaFinal": {
+            "type": "string",
+            "example": "2026-09-30"
+          }
+        },
+        "required": [
+          "tipoObligacion",
+          "responsablePrincipalId",
+          "concepto",
+          "periodo",
+          "metaMensual",
+          "fechaInicio"
+        ]
+      },
+      "AporteItemDto": {
+        "type": "object",
+        "properties": {
+          "personaId": {
+            "type": "number",
+            "description": "Quien entrega el dinero. Un tercero genera el cobro por cruce (Trigger 3)"
+          },
+          "valor": {
+            "type": "object",
+            "example": "50000.00"
+          },
+          "metodo": {
+            "type": "string",
+            "enum": [
+              "Fisico",
+              "Bancolombia",
+              "Nequi",
+              "Carrera",
+              "Uso Carro",
+              "Prestamo",
+              "Pago Mensual",
+              "Otro"
+            ]
+          },
+          "comentarios": {
+            "type": "string",
+            "example": "Los debe pagar Andres"
+          }
+        },
+        "required": [
+          "personaId",
+          "valor",
+          "metodo"
+        ]
+      },
+      "RegistrarAportesDiaDto": {
+        "type": "object",
+        "properties": {
+          "fecha": {
+            "type": "string",
+            "example": "2026-09-14"
+          },
+          "notas": {
+            "type": "string"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AporteItemDto"
+            }
+          }
+        },
+        "required": [
+          "fecha",
+          "items"
+        ]
+      },
+      "CreateCruceDeudaDto": {
+        "type": "object",
+        "properties": {
+          "fechaCruce": {
+            "type": "string",
+            "example": "2026-10-13",
+            "description": "Por defecto: hoy"
+          },
+          "personaQueAbonaId": {
+            "type": "number",
+            "description": "Persona a quien se le disminuye la deuda/obligación (p. ej. el papá)"
+          },
+          "personaQueAsumeDeudaId": {
+            "type": "number",
+            "description": "Persona a quien se le carga la deuda a tu favor (p. ej. Andrés)"
+          },
+          "monto": {
+            "type": "object",
+            "example": "100000.00"
+          },
+          "prestamoDestinoId": {
+            "type": "number",
+            "description": "Préstamo u obligación sobre la que se aplica el abono"
+          },
+          "periodoRecurrenteDestinoId": {
+            "type": "number",
+            "description": "Periodo recurrente sobre el que se aplica el abono"
+          },
+          "concepto": {
+            "type": "string",
+            "example": "Andrés me debe 100.000, descontar de la cuota de la casa"
+          },
+          "comentarios": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "personaQueAbonaId",
+          "personaQueAsumeDeudaId",
+          "monto",
+          "concepto"
+        ]
+      },
+      "AbonarPersonaDto": {
+        "type": "object",
+        "properties": {
+          "cuentaDestinoId": {
+            "type": "number",
+            "description": "Cuenta donde entra el dinero"
+          },
+          "monto": {
+            "type": "object",
+            "example": "350000.50"
+          },
+          "periodoImputacion": {
+            "type": "string",
+            "example": "2026-10",
+            "description": "Mes contable al que se imputa el abono"
+          },
+          "concepto": {
+            "type": "string",
+            "example": "Pago Nequi octubre"
+          },
+          "liquidarPrestamosCorteId": {
+            "type": "number",
+            "description": "Si se envía, marca como 'Pagado' los préstamos pendientes de la persona en ese corte"
+          }
+        },
+        "required": [
+          "cuentaDestinoId",
+          "monto",
+          "periodoImputacion",
+          "concepto"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+# Ejecución local de la API NestJS apuntando a Supabase (o a un Postgres local con el esquema aplicado).
+#   cp .env.example .env   (completar DATABASE_URL, JWT_SECRET, ...)
+#   docker compose up --build
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: finanzas-api-nestjs:local
+    container_name: finanzas-api-nestjs
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "9000"
+    ports:
+      - "9000:9000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/health >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3

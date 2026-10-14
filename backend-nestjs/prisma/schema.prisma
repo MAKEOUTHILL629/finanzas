@@ -1,0 +1,540 @@
+// =============================================================================
+// Esquema Prisma — Supabase / PostgreSQL (21 tablas + 2 vistas)
+// Fuente: "base de datos-documentacion.md" secciones 3 y 4.2.
+//
+//  * Los modelos conservan EXACTAMENTE el nombre de tabla y de columna de la BD
+//    (equivale a lo que produciría `prisma db pull`), por eso no hay @@map.
+//  * int8  -> BigInt          (la capa HTTP lo convierte a number: JsonSerializationInterceptor)
+//  * numeric -> Decimal       (Prisma.Decimal / decimal.js; PROHIBIDO number en cálculos monetarios)
+//  * Triggers y SPs viven en la BD; Prisma no los gestiona. No se usa `prisma migrate`.
+// =============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["views"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dominio 1: Identidad, autenticación y contactos
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Users {
+  id               BigInt   @id @default(autoincrement())
+  email            String   @unique
+  password_hash    String?  @db.VarChar
+  role             String   @db.VarChar
+  name             String?
+  avatar_url       String?
+  is_active        Boolean  @default(true)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+  provider         String?
+  provider_user_id String?
+
+  linked_accounts        linked_accounts[]
+  personas_owned         Personas[]                @relation("PersonasOwner")
+  personas_linked        Personas[]                @relation("PersonasLinkedUser")
+  tarjetas               Tarjetas[]
+  compras_credito        ComprasCredito[]
+  cuentas_financieras    CuentasFinancieras[]
+  categorias             Categorias[]
+  transacciones          Transacciones[]
+  notificaciones_correo  NotificacionesCorreo[]
+  plantillas_recurrentes PlantillasRecurrentes[]
+  periodos_recurrentes   PeriodosRecurrentes[]
+  cortes_cobro           CortesCobro[]
+  prestamos              Prestamos[]
+  obligaciones_mes       ObligacionesMes[]
+  cruces_deuda           CrucesDeuda[]
+  movimientos_deuda      MovimientosDeudaPersona[]
+}
+
+model linked_accounts {
+  id               BigInt   @id @default(autoincrement())
+  user_id          BigInt
+  provider_key     String   @db.VarChar
+  provider_user_id String
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+
+  user Users @relation(fields: [user_id], references: [id])
+}
+
+model Personas {
+  id                   BigInt   @id @default(autoincrement())
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  nombre               String?  @db.VarChar
+  iniciales_nombre     String?
+  color_representativo String?
+  owner_user_id        BigInt?
+  linked_user_id       BigInt?
+  appsheet_row_id      String?  @unique
+  email                String?
+  numero_celular       String?  @db.VarChar
+  legacy_appsheet_id   String?  @unique @db.VarChar
+
+  owner       Users? @relation("PersonasOwner", fields: [owner_user_id], references: [id])
+  linked_user Users? @relation("PersonasLinkedUser", fields: [linked_user_id], references: [id])
+
+  responsables_compras     ResponsablesComprasCredito[]
+  prestamos_deudor         Prestamos[]                  @relation("PrestamoResponsable")
+  prestamos_creados        Prestamos[]                  @relation("PrestamoCreadoPor")
+  aprobaciones             AprobacionesPrestamos[]
+  obligaciones             ObligacionesMes[]
+  aportes                  AportesDetalle[]
+  cruces_abona             CrucesDeuda[]                @relation("CruceAbona")
+  cruces_asume             CrucesDeuda[]                @relation("CruceAsume")
+  responsables_recurrentes ResponsablesRecurrentes[]
+  movimientos              MovimientosDeudaPersona[]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dominio 2: Tarjetas de crédito y compras diferidas
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Tarjetas {
+  id                         BigInt    @id @default(autoincrement())
+  created_at                 DateTime  @default(now()) @db.Timestamptz(6)
+  franquicia                 String?   @db.VarChar
+  descripcion                String?   @db.VarChar
+  tasa_interes_compra        Decimal?  @db.Decimal
+  tasa_interes_avance        Decimal?  @db.Decimal
+  cuota_manejo               Decimal?  @db.Decimal
+  url_info                   String?
+  ultima_actualizacion_tasas DateTime? @db.Timestamp(6)
+  extract_tasas              Boolean   @default(false)
+  owner_user_id              BigInt?
+  dia_corte                  Int?      @db.SmallInt
+  dia_limite_pago            Int?      @db.SmallInt
+  cupo_total                 Decimal?  @db.Decimal
+  permite_dolares            Boolean?
+
+  owner Users? @relation(fields: [owner_user_id], references: [id])
+
+  compras               ComprasCredito[]
+  transacciones_pagadas Transacciones[]
+  plantillas_default    PlantillasRecurrentes[]
+}
+
+model ComprasCredito {
+  id                    BigInt    @id @default(autoincrement())
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  concepto              String?   @db.VarChar
+  valor_compra          Decimal?  @db.Decimal
+  fecha_compra          DateTime? @db.Date
+  numero_cuotas         Int?      @db.SmallInt
+  fecha_ultima_cuota    DateTime? @db.Date
+  pago_mensual          Decimal?  @db.Decimal
+  interes               Decimal?  @db.Decimal
+  descripcion           String?   @db.VarChar
+  estado                String?   @db.VarChar
+  tarjeta               BigInt?
+  owner_user_id         BigInt?
+  moneda_original       String    @default("COP") @db.Char(3)
+  valor_moneda_original Decimal?  @db.Decimal
+  tasa_cambio_aplicada  Decimal?  @db.Decimal
+  trm_confirmada        Boolean?
+
+  tarjeta_ref Tarjetas? @relation(fields: [tarjeta], references: [id])
+  owner       Users?    @relation(fields: [owner_user_id], references: [id])
+
+  cuotas           CuotasDetalle[]
+  responsables     ResponsablesComprasCredito[]
+  notificaciones   NotificacionesCorreo[]
+  periodos_pagados PeriodosRecurrentes[]
+}
+
+model CuotasDetalle {
+  id                  BigInt    @id @default(autoincrement())
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  numero_cuota        BigInt?
+  fecha_pago          DateTime? @db.Date
+  saldo_restante      Decimal?  @db.Decimal
+  interes_pagado      Decimal?  @db.Decimal
+  aporte_capital      Decimal?  @db.Decimal
+  pago_total          Decimal?  @db.Decimal
+  compra              BigInt?
+  estado              String?
+  periodo_facturacion String?   @db.Char(7)
+
+  compra_ref ComprasCredito? @relation(fields: [compra], references: [id])
+
+  movimientos MovimientosDeudaPersona[]
+}
+
+model ResponsablesComprasCredito {
+  id              BigInt   @id @default(autoincrement())
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  persona         BigInt?
+  porcentaje_pago Decimal? @db.Decimal
+  cantidad_pago   Decimal? @db.Decimal
+  cantidad_cuotas Int?     @db.SmallInt
+  compra_credito  BigInt?
+
+  persona_ref        Personas?       @relation(fields: [persona], references: [id])
+  compra_credito_ref ComprasCredito? @relation(fields: [compra_credito], references: [id])
+
+  movimientos MovimientosDeudaPersona[]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dominio 3: Cuentas, categorías, transacciones y correos bancarios
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CuentasFinancieras {
+  id                BigInt    @id @default(autoincrement())
+  owner_user_id     BigInt
+  nombre            String    @db.VarChar
+  tipo_cuenta       String    @db.VarChar
+  banco_entidad     String?   @db.VarChar
+  ultimos_4_digitos String?   @db.VarChar
+  moneda            String    @default("COP") @db.Char(3)
+  saldo_actual      Decimal   @default(0) @db.Decimal
+  is_active         Boolean?  @default(true)
+  created_at        DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner Users @relation(fields: [owner_user_id], references: [id])
+
+  transacciones_origen  Transacciones[]         @relation("TxCuentaOrigen")
+  transacciones_destino Transacciones[]         @relation("TxCuentaDestino")
+  plantillas_debito     PlantillasRecurrentes[]
+}
+
+model Categorias {
+  id            BigInt    @id @default(autoincrement())
+  owner_user_id BigInt?
+  nombre        String    @db.VarChar
+  tipo          String    @db.VarChar
+  icono         String?
+  color         String?
+  created_at    DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner Users? @relation(fields: [owner_user_id], references: [id])
+
+  transacciones Transacciones[]
+  plantillas    PlantillasRecurrentes[]
+}
+
+model Transacciones {
+  id                BigInt    @id @default(autoincrement())
+  owner_user_id     BigInt
+  tipo_transaccion  String    @db.VarChar
+  cuenta_origen_id  BigInt?
+  cuenta_destino_id BigInt?
+  tarjeta_pagada_id BigInt?
+  categoria_id      BigInt?
+  fecha_transaccion DateTime  @default(now()) @db.Timestamptz(6)
+  concepto          String    @db.VarChar
+  moneda_original   String    @default("COP") @db.Char(3)
+  monto_original    Decimal   @db.Decimal
+  tasa_cambio       Decimal   @default(1.0) @db.Decimal
+  monto_cop         Decimal   @db.Decimal
+  origen_registro   String?   @db.VarChar
+  estado            String?   @db.VarChar
+  notas             String?
+  created_at        DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner          Users               @relation(fields: [owner_user_id], references: [id])
+  cuenta_origen  CuentasFinancieras? @relation("TxCuentaOrigen", fields: [cuenta_origen_id], references: [id])
+  cuenta_destino CuentasFinancieras? @relation("TxCuentaDestino", fields: [cuenta_destino_id], references: [id])
+  tarjeta_pagada Tarjetas?           @relation(fields: [tarjeta_pagada_id], references: [id])
+  categoria      Categorias?         @relation(fields: [categoria_id], references: [id])
+
+  notificaciones NotificacionesCorreo[]
+  periodos_pago  PeriodosRecurrentes[]
+  movimientos    MovimientosDeudaPersona[]
+}
+
+model NotificacionesCorreo {
+  id                         BigInt    @id @default(autoincrement())
+  owner_user_id              BigInt
+  external_message_id        String    @unique @db.VarChar
+  remitente                  String?   @db.VarChar
+  asunto                     String?
+  fecha_correo               DateTime  @db.Timestamptz(6)
+  cuerpo_extraido            String?
+  datos_parseados            Json?
+  estado_procesamiento       String?   @db.VarChar
+  transaccion_generada_id    BigInt?
+  compra_credito_generada_id BigInt?
+  created_at                 DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner                Users           @relation(fields: [owner_user_id], references: [id])
+  transaccion_generada Transacciones?  @relation(fields: [transaccion_generada_id], references: [id])
+  compra_generada      ComprasCredito? @relation(fields: [compra_credito_generada_id], references: [id])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dominio 4: Gastos recurrentes y pronósticos
+// ─────────────────────────────────────────────────────────────────────────────
+
+model PlantillasRecurrentes {
+  id                         BigInt    @id @default(autoincrement())
+  owner_user_id              BigInt
+  nombre                     String    @db.VarChar
+  categoria_id               BigInt?
+  frecuencia                 String?   @db.VarChar
+  dia_vencimiento_estimado   Int?      @db.SmallInt
+  es_monto_variable          Boolean?
+  moneda                     String    @default("COP") @db.Char(3)
+  monto_base_estimado        Decimal   @db.Decimal
+  cuenta_debito_default_id   BigInt?
+  tarjeta_credito_default_id BigInt?
+  prestamo_asociado_id       BigInt?
+  is_active                  Boolean?  @default(true)
+  created_at                 DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner             Users               @relation(fields: [owner_user_id], references: [id])
+  categoria         Categorias?         @relation(fields: [categoria_id], references: [id])
+  cuenta_debito     CuentasFinancieras? @relation(fields: [cuenta_debito_default_id], references: [id])
+  tarjeta_default   Tarjetas?           @relation(fields: [tarjeta_credito_default_id], references: [id])
+  prestamo_asociado Prestamos?          @relation(fields: [prestamo_asociado_id], references: [id])
+
+  responsables ResponsablesRecurrentes[]
+  periodos     PeriodosRecurrentes[]
+}
+
+model ResponsablesRecurrentes {
+  id                       BigInt    @id @default(autoincrement())
+  plantilla_recurrente_id  BigInt
+  persona_id               BigInt?
+  porcentaje_participacion Decimal?  @db.Decimal
+  monto_fijo_participacion Decimal?  @db.Decimal
+  created_at               DateTime? @default(now()) @db.Timestamptz(6)
+
+  plantilla PlantillasRecurrentes @relation(fields: [plantilla_recurrente_id], references: [id])
+  persona   Personas?             @relation(fields: [persona_id], references: [id])
+}
+
+model PeriodosRecurrentes {
+  id                      BigInt    @id @default(autoincrement())
+  plantilla_recurrente_id BigInt
+  owner_user_id           BigInt
+  periodo                 String    @db.Char(7)
+  fecha_estimada_pago     DateTime  @db.Date
+  monto_pronosticado      Decimal   @db.Decimal
+  monto_real_pagado       Decimal?  @db.Decimal
+  estado                  String?   @db.VarChar
+  transaccion_pago_id     BigInt?
+  compra_credito_pago_id  BigInt?
+  created_at              DateTime? @default(now()) @db.Timestamptz(6)
+
+  plantilla   PlantillasRecurrentes @relation(fields: [plantilla_recurrente_id], references: [id])
+  owner       Users                 @relation(fields: [owner_user_id], references: [id])
+  transaccion Transacciones?        @relation(fields: [transaccion_pago_id], references: [id])
+  compra_pago ComprasCredito?       @relation(fields: [compra_credito_pago_id], references: [id])
+
+  movimientos MovimientosDeudaPersona[]
+  cruces      CrucesDeuda[]
+
+  @@unique([plantilla_recurrente_id, periodo], map: "uq_periodos_recurrentes_plantilla_periodo")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dominio 5: Préstamos, cortes, obligaciones mensuales y sub-ledger
+// ─────────────────────────────────────────────────────────────────────────────
+
+model CortesCobro {
+  id                 BigInt    @id @default(autoincrement())
+  owner_user_id      BigInt
+  concepto           String    @db.VarChar
+  fecha_inicio       DateTime  @db.Date
+  fecha_final        DateTime  @db.Date
+  estado             String?   @db.VarChar
+  legacy_appsheet_id String?   @unique @db.VarChar
+  created_at         DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner Users @relation(fields: [owner_user_id], references: [id])
+
+  prestamos Prestamos[]
+}
+
+model Prestamos {
+  id                     BigInt    @id @default(autoincrement())
+  created_at             DateTime  @default(now()) @db.Timestamptz(6)
+  valor_prestado         Decimal?  @db.Decimal
+  concepto               String?   @db.VarChar
+  fecha_cobro            DateTime? @db.Date
+  responsable            BigInt?
+  estado                 String?   @db.VarChar
+  comentarios            String?   @db.VarChar
+  owner_user_id          BigInt?
+  direccion_prestamo     String?   @db.VarChar
+  saldo_pendiente        Decimal?  @db.Decimal
+  es_recurrente_mensual  Boolean?
+  cuota_mensual_acordada Decimal?  @db.Decimal
+  fecha_prestamo         DateTime? @db.Date
+  metodo                 String?   @db.VarChar
+  corte_id               BigInt?
+  creado_por_persona_id  BigInt?
+  origen_cruce_aporte_id BigInt?
+  legacy_appsheet_id     String?   @unique @db.VarChar
+
+  owner               Users?          @relation(fields: [owner_user_id], references: [id])
+  responsable_ref     Personas?       @relation("PrestamoResponsable", fields: [responsable], references: [id])
+  creado_por          Personas?       @relation("PrestamoCreadoPor", fields: [creado_por_persona_id], references: [id])
+  corte               CortesCobro?    @relation(fields: [corte_id], references: [id])
+  origen_cruce_aporte AportesDetalle? @relation("PrestamoOrigenAporte", fields: [origen_cruce_aporte_id], references: [id])
+
+  aprobaciones        AprobacionesPrestamos[]
+  movimientos         MovimientosDeudaPersona[]
+  plantillas          PlantillasRecurrentes[]
+  cruces_destino      CrucesDeuda[]
+  aportes_generadores AportesDetalle[]          @relation("AporteCruceGenerado")
+}
+
+model AprobacionesPrestamos {
+  id                 BigInt    @id @default(autoincrement())
+  prestamo_id        BigInt
+  persona_id         BigInt
+  estado             String    @db.VarChar
+  comentarios        String?
+  fecha_aprobacion   DateTime? @db.Timestamptz(6)
+  legacy_appsheet_id String?   @unique @db.VarChar
+
+  prestamo Prestamos @relation(fields: [prestamo_id], references: [id])
+  persona  Personas  @relation(fields: [persona_id], references: [id])
+}
+
+model ObligacionesMes {
+  id                       BigInt    @id @default(autoincrement())
+  owner_user_id            BigInt
+  tipo_obligacion          String    @db.VarChar
+  responsable_principal_id BigInt
+  concepto                 String    @db.VarChar
+  periodo                  String    @db.Char(7)
+  meta_mensual             Decimal   @db.Decimal
+  fecha_inicio             DateTime  @db.Date
+  fecha_final              DateTime? @db.Date
+  estado                   String?   @db.VarChar
+  legacy_appsheet_id       String?   @unique @db.VarChar
+  created_at               DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner                 Users    @relation(fields: [owner_user_id], references: [id])
+  responsable_principal Personas @relation(fields: [responsable_principal_id], references: [id])
+
+  dias AportesDia[]
+}
+
+model AportesDia {
+  id                 BigInt    @id @default(autoincrement())
+  obligacion_mes_id  BigInt
+  fecha              DateTime  @db.Date
+  notas              String?
+  legacy_appsheet_id String?   @unique @db.VarChar
+  created_at         DateTime? @default(now()) @db.Timestamptz(6)
+
+  obligacion_mes ObligacionesMes @relation(fields: [obligacion_mes_id], references: [id])
+
+  detalles AportesDetalle[]
+}
+
+model AportesDetalle {
+  id                         BigInt    @id @default(autoincrement())
+  aporte_dia_id              BigInt
+  persona_id                 BigInt
+  valor                      Decimal   @db.Decimal
+  metodo                     String    @db.VarChar
+  comentarios                String?
+  prestamo_cruce_generado_id BigInt?
+  legacy_appsheet_id         String?   @unique @db.VarChar
+  created_at                 DateTime? @default(now()) @db.Timestamptz(6)
+
+  aporte_dia     AportesDia @relation(fields: [aporte_dia_id], references: [id])
+  persona        Personas   @relation(fields: [persona_id], references: [id])
+  prestamo_cruce Prestamos? @relation("AporteCruceGenerado", fields: [prestamo_cruce_generado_id], references: [id])
+
+  prestamos_origen Prestamos[] @relation("PrestamoOrigenAporte")
+}
+
+model CrucesDeuda {
+  id                            BigInt    @id @default(autoincrement())
+  owner_user_id                 BigInt
+  fecha_cruce                   DateTime  @db.Date
+  persona_que_abona_id          BigInt
+  persona_que_asume_deuda_id    BigInt
+  monto                         Decimal   @db.Decimal
+  prestamo_destino_id           BigInt?
+  periodo_recurrente_destino_id BigInt?
+  concepto                      String    @db.VarChar
+  comentarios                   String?
+  created_at                    DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner             Users                @relation(fields: [owner_user_id], references: [id])
+  persona_que_abona Personas             @relation("CruceAbona", fields: [persona_que_abona_id], references: [id])
+  persona_que_asume Personas             @relation("CruceAsume", fields: [persona_que_asume_deuda_id], references: [id])
+  prestamo_destino  Prestamos?           @relation(fields: [prestamo_destino_id], references: [id])
+  periodo_destino   PeriodosRecurrentes? @relation(fields: [periodo_recurrente_destino_id], references: [id])
+
+  movimientos MovimientosDeudaPersona[]
+}
+
+model MovimientosDeudaPersona {
+  id                    BigInt    @id @default(autoincrement())
+  owner_user_id         BigInt
+  persona_id            BigInt
+  fecha_movimiento      DateTime  @db.Date
+  periodo_imputacion    String    @db.Char(7)
+  tipo_movimiento       String    @db.VarChar
+  signo                 Int       @db.SmallInt
+  monto                 Decimal   @db.Decimal
+  cuota_detalle_id      BigInt?
+  responsable_compra_id BigInt?
+  prestamo_id           BigInt?
+  periodo_recurrente_id BigInt?
+  transaccion_id        BigInt?
+  cruce_deuda_id        BigInt?
+  appsheet_row_id       String?   @unique
+  concepto              String    @db.VarChar
+  estado                String?   @db.VarChar
+  created_at            DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner              Users                       @relation(fields: [owner_user_id], references: [id])
+  persona            Personas                    @relation(fields: [persona_id], references: [id])
+  cuota_detalle      CuotasDetalle?              @relation(fields: [cuota_detalle_id], references: [id])
+  responsable_compra ResponsablesComprasCredito? @relation(fields: [responsable_compra_id], references: [id])
+  prestamo           Prestamos?                  @relation(fields: [prestamo_id], references: [id])
+  periodo_recurrente PeriodosRecurrentes?        @relation(fields: [periodo_recurrente_id], references: [id])
+  transaccion        Transacciones?              @relation(fields: [transaccion_id], references: [id])
+  cruce_deuda        CrucesDeuda?                @relation(fields: [cruce_deuda_id], references: [id])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vistas calculadas (sección 4.2 del documento de BD) — solo lectura
+// ─────────────────────────────────────────────────────────────────────────────
+
+view vw_ResumenObligacionesMes {
+  obligacion_mes_id            BigInt    @unique
+  owner_user_id                BigInt?
+  tipo_obligacion              String?   @db.VarChar
+  responsable_principal_id     BigInt?
+  responsable_principal_nombre String?   @db.VarChar
+  concepto                     String?   @db.VarChar
+  periodo                      String?   @db.Char(7)
+  meta_mensual                 Decimal?  @db.Decimal
+  fecha_inicio                 DateTime? @db.Date
+  fecha_final                  DateTime? @db.Date
+  estado_calculado             String?
+  dias_aportados               BigInt?
+  cantidad_registros           BigInt?
+  aporte_total_real            Decimal?  @db.Decimal(15, 2)
+  restante_real                Decimal?  @db.Decimal(15, 2)
+  aportado_directo_responsable Decimal?  @db.Decimal(15, 2)
+  aportado_por_cruces          Decimal?  @db.Decimal(15, 2)
+}
+
+view vw_AportesDiaResumen {
+  aporte_dia_id     BigInt    @unique
+  obligacion_mes_id BigInt?
+  mes_concepto      String?   @db.VarChar
+  periodo           String?   @db.Char(7)
+  fecha             DateTime? @db.Date
+  notas             String?
+  items_count       BigInt?
+  valor_total_dia   Decimal?  @db.Decimal(15, 2)
+}

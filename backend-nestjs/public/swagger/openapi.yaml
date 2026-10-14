@@ -1,0 +1,1332 @@
+openapi: 3.0.3
+info:
+  title: Finanzas API
+  description: |
+    API para la gestión de finanzas personales: compras a crédito, cuotas,
+    responsables, tarjetas, préstamos y pagos.
+
+    ## Autenticación
+    La mayoría de endpoints requieren un **Bearer Token JWT**.
+    Obténlo con `POST /api/auth/login` y luego úsalo en el header:
+    ```
+    Authorization: Bearer <token>
+    ```
+  version: 1.0.0
+  contact:
+    name: Finanzas App
+
+servers:
+  - url: http://localhost:9000
+    description: Desarrollo local
+  - url: https://tu-dominio.com
+    description: Producción
+
+tags:
+  - name: Auth
+    description: Autenticación y gestión de sesión
+  - name: Tarjetas
+    description: Gestión de tarjetas de crédito y scraping de tasas
+  - name: Compras Crédito
+    description: Registro y gestión de compras a crédito
+  - name: Cuotas
+    description: Detalle de cuotas por compra
+  - name: Responsables
+    description: Responsables de pago de cada compra
+  - name: Préstamos
+    description: Gestión de préstamos
+  - name: Pagos
+    description: Consultas de pagos mensuales por persona y tarjeta
+  - name: Personas
+    description: Listado de personas
+  - name: Health
+    description: Estado del servicio
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SECURITY
+# ─────────────────────────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # ── Auth ─────────────────────────────────────────────────────────────────
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: usuario@ejemplo.com
+        password:
+          type: string
+          format: password
+          example: "mi_contraseña"
+
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      properties:
+        email:
+          type: string
+          format: email
+          example: nuevo@ejemplo.com
+        password:
+          type: string
+          example: "mi_contraseña"
+        name:
+          type: string
+          example: Juan Pérez
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiJ9..."
+        userId:
+          type: integer
+          example: 1
+        email:
+          type: string
+          example: usuario@ejemplo.com
+        name:
+          type: string
+          example: Juan Pérez
+        role:
+          type: string
+          example: user
+
+    # ── Tarjeta ───────────────────────────────────────────────────────────────
+    Tarjeta:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        franquicia:
+          type: string
+          example: Mastercard
+        fechaCreacion:
+          type: string
+          format: date-time
+          example: "2024-01-15T10:30:00"
+          nullable: true
+        descripcion:
+          type: string
+          example: "Tarjeta Oro Bancolombia"
+          nullable: true
+        tasaInteresCompra:
+          type: number
+          format: float
+          example: 1.8895
+          nullable: true
+          description: Tasa de interés mensual para compras (%)
+        tasaInteresAvance:
+          type: number
+          format: float
+          example: 1.8895
+          nullable: true
+          description: Tasa de interés mensual para avances (%)
+        cuotaManejo:
+          type: number
+          format: float
+          example: 36990.0
+          nullable: true
+          description: Cuota de manejo mensual
+        urlInfo:
+          type: string
+          example: "https://www.bancolombia.com/personas/tarjetas-de-credito/mastercard/oro"
+          nullable: true
+          description: URL de la página web del banco con las tasas
+        ultimaActualizacionTasas:
+          type: string
+          format: date-time
+          example: "2026-03-01T23:39:06"
+          nullable: true
+          description: Fecha de la última actualización de tasas vía scraping
+        extractTasas:
+          type: boolean
+          example: true
+          description: Si está en true, se incluye en el proceso de scraping automático
+
+    BalanceTarjeta:
+      type: object
+      properties:
+        tarjeta:
+          type: integer
+          example: 1
+        franquicia:
+          type: string
+          example: Mastercard
+        total_saldo_restante:
+          type: number
+          format: double
+          example: 2500000.0
+
+    ResultadoScraping:
+      type: object
+      properties:
+        mensaje:
+          type: string
+          example: "Proceso completado: 2 actualizadas, 0 omitidas, 0 con error"
+        total:
+          type: integer
+          example: 2
+        actualizadas:
+          type: integer
+          example: 2
+        omitidas:
+          type: integer
+          example: 0
+        errores:
+          type: integer
+          example: 0
+        resultados:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResultadoScrapingItem'
+
+    ResultadoScrapingItem:
+      type: object
+      properties:
+        tarjetaId:
+          type: integer
+          example: 1
+        franquicia:
+          type: string
+          example: Mastercard
+        estado:
+          type: string
+          enum: [ACTUALIZADA, OMITIDA, ERROR]
+          example: ACTUALIZADA
+        mensaje:
+          type: string
+          example: "Scraping exitoso: compra mensual=1.8895%"
+        tasas:
+          type: object
+          nullable: true
+          properties:
+            interesCompraMensual:
+              type: number
+              format: float
+              example: 1.8895
+              nullable: true
+            interesCompraAnual:
+              type: number
+              format: float
+              example: 25.1852
+              nullable: true
+            interesAvanceMensual:
+              type: number
+              format: float
+              example: 1.8895
+              nullable: true
+            interesAvanceAnual:
+              type: number
+              format: float
+              example: 25.1852
+              nullable: true
+            cuotaManejo:
+              type: number
+              format: float
+              example: 0.0
+              nullable: true
+
+    # ── Compra Crédito ────────────────────────────────────────────────────────
+    CompraCredito:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+          readOnly: true
+        fechaCreacion:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+        concepto:
+          type: string
+          example: "Nevera Samsung"
+        valorCompra:
+          type: number
+          format: float
+          example: 2500000.0
+        fechaCompra:
+          type: string
+          format: date
+          example: "2024-04-05"
+        numeroCuotas:
+          type: integer
+          example: 36
+        fechaUltimaCuota:
+          type: string
+          format: date
+          nullable: true
+        pagoMensual:
+          type: number
+          format: float
+          example: 85000.0
+          nullable: true
+        interes:
+          type: number
+          format: float
+          example: 1.8895
+        descripcion:
+          type: string
+          example: "Compra en tienda Éxito"
+          nullable: true
+        estado:
+          type: string
+          example: "Pendiente"
+          default: "Pendiente"
+        tarjeta:
+          type: integer
+          example: 1
+          description: ID de la tarjeta de crédito
+
+    CompraCreditoCreate:
+      type: object
+      required: [concepto, valorCompra, fechaCompra, numeroCuotas, interes, descripcion, estado, tarjeta]
+      properties:
+        concepto:
+          type: string
+          example: "Nevera Samsung"
+        valorCompra:
+          type: number
+          format: float
+          example: 2500000.0
+        fechaCompra:
+          type: string
+          format: date
+          example: "2024-04-05"
+        numeroCuotas:
+          type: integer
+          example: 36
+        interes:
+          type: number
+          format: float
+          example: 1.8895
+        descripcion:
+          type: string
+          example: "Compra en tienda Éxito"
+        estado:
+          type: string
+          example: "Pendiente"
+        tarjeta:
+          type: integer
+          example: 1
+
+    CompraCreditoUpdate:
+      type: object
+      required: [id, concepto, valorCompra, fechaCompra, numeroCuotas, interes, descripcion, estado, tarjeta]
+      properties:
+        id:
+          type: integer
+          example: 5
+        concepto:
+          type: string
+          example: "Nevera Samsung"
+        valorCompra:
+          type: number
+          format: float
+          example: 2500000.0
+        fechaCompra:
+          type: string
+          format: date
+          example: "2024-04-05"
+        numeroCuotas:
+          type: integer
+          example: 36
+        interes:
+          type: number
+          format: float
+          example: 1.8895
+        descripcion:
+          type: string
+          example: "Compra en tienda Éxito"
+        estado:
+          type: string
+          example: "Pendiente"
+        tarjeta:
+          type: integer
+          example: 1
+
+    PagoCreditosMesTarjeta:
+      type: object
+      properties:
+        valorPago:
+          type: number
+          format: float
+          example: 450000.0
+        tarjeta:
+          type: integer
+          example: 1
+        fechaPago:
+          type: string
+          format: date
+
+    # ── Cuota Detalle ─────────────────────────────────────────────────────────
+    CuotaDetalle:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        numeroCuota:
+          type: integer
+          example: 1
+        fechaPago:
+          type: string
+          format: date
+          example: "2024-05-05"
+        saldoRestante:
+          type: number
+          format: double
+          example: 2450000.0
+        interesPagado:
+          type: number
+          format: double
+          example: 47237.5
+        aporteCapital:
+          type: number
+          format: double
+          example: 37762.5
+        pagoTotal:
+          type: number
+          format: double
+          example: 85000.0
+        compra:
+          type: integer
+          example: 1
+        estado:
+          type: string
+          example: "Pendiente"
+
+    # ── Responsable ───────────────────────────────────────────────────────────
+    ResponsableCompraCredito:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+          readOnly: true
+        fechaCreacion:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+        persona:
+          type: integer
+          example: 2
+        porcentajePago:
+          type: number
+          format: float
+          example: 50.0
+          description: Porcentaje del pago que asume esta persona (0-100)
+        cantidadPago:
+          type: number
+          format: float
+          example: 42500.0
+        cantidadCuotas:
+          type: integer
+          example: 36
+        compraCredito:
+          type: integer
+          example: 1
+
+    ResponsableCreate:
+      type: object
+      required: [persona, porcentajePago, cantidadPago, cantidadCuotas, compraCredito]
+      properties:
+        persona:
+          type: integer
+          example: 2
+        porcentajePago:
+          type: number
+          format: float
+          example: 50.0
+        cantidadPago:
+          type: number
+          format: float
+          example: 42500.0
+        cantidadCuotas:
+          type: integer
+          example: 36
+        compraCredito:
+          type: integer
+          example: 1
+
+    ResponsableUpdate:
+      type: object
+      required: [id, persona, porcentajePago, cantidadPago, cantidadCuotas, compraCredito]
+      properties:
+        id:
+          type: integer
+          example: 3
+        persona:
+          type: integer
+          example: 2
+        porcentajePago:
+          type: number
+          format: float
+          example: 60.0
+        cantidadPago:
+          type: number
+          format: float
+          example: 51000.0
+        cantidadCuotas:
+          type: integer
+          example: 36
+        compraCredito:
+          type: integer
+          example: 1
+
+    # ── Persona ───────────────────────────────────────────────────────────────
+    Persona:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        nombre:
+          type: string
+          example: "María García"
+        fechaCreacion:
+          type: string
+          format: date-time
+          nullable: true
+
+    # ── Préstamo ──────────────────────────────────────────────────────────────
+    Prestamo:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        fechaCreacion:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+        valorPrestado:
+          type: number
+          format: float
+          example: 500000.0
+        concepto:
+          type: string
+          example: "Préstamo para viaje"
+        fechaCobro:
+          type: string
+          format: date
+          example: "2024-06-01"
+        responsable:
+          type: integer
+          example: 2
+        estado:
+          type: string
+          example: "Pendiente"
+        comentarios:
+          type: string
+          example: "Pago parcial recibido"
+
+    # ── Pagos ─────────────────────────────────────────────────────────────────
+    PagoMensualPersona:
+      type: object
+      properties:
+        persona:
+          type: integer
+          example: 2
+        nombre:
+          type: string
+          example: "María García"
+        totalPago:
+          type: number
+          format: double
+          example: 320000.0
+        mes:
+          type: integer
+          example: 4
+        year:
+          type: integer
+          example: 2024
+
+    # ── Errores ───────────────────────────────────────────────────────────────
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Datos inválidos"
+
+    MensajeExito:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Operación realizada exitosamente"
+        id:
+          type: integer
+          nullable: true
+          example: 5
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PATHS
+# ─────────────────────────────────────────────────────────────────────────────
+security:
+  - bearerAuth: []
+
+paths:
+
+  # ═══ HEALTH ═══════════════════════════════════════════════════════════════
+  /health:
+    get:
+      tags: [Health]
+      summary: Estado del servicio
+      description: Verifica que el servicio esté corriendo correctamente.
+      security: []
+      responses:
+        '200':
+          description: Servicio disponible
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+
+  # ═══ AUTH ════════════════════════════════════════════════════════════════
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      summary: Iniciar sesión
+      description: Autentica al usuario y retorna un JWT.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: "usuario@ejemplo.com"
+              password: "mi_contraseña"
+      responses:
+        '200':
+          description: Login exitoso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Credenciales inválidas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/auth/register:
+    post:
+      tags: [Auth]
+      summary: Registrar nuevo usuario
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: Usuario registrado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Email ya registrado o datos inválidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Cerrar sesión
+      responses:
+        '200':
+          description: Sesión cerrada exitosamente
+
+  /api/auth/token-is-valid:
+    get:
+      tags: [Auth]
+      summary: Validar token JWT
+      description: Verifica si el token Bearer actual es válido.
+      responses:
+        '200':
+          description: Token válido
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+                    example: true
+        '401':
+          description: Token inválido o expirado
+
+  /api/auth/callback/{provider}:
+    get:
+      tags: [Auth]
+      summary: Callback OAuth
+      description: Endpoint de callback para autenticación con proveedores OAuth.
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+            example: google
+      responses:
+        '200':
+          description: Autenticación OAuth exitosa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  # ═══ TARJETAS ════════════════════════════════════════════════════════════
+  /api/tarjetas:
+    get:
+      tags: [Tarjetas]
+      summary: Listar tarjetas
+      description: |
+        Retorna todas las tarjetas de crédito registradas con todos sus campos,
+        incluyendo tasas de interés (si fueron extraídas via scraping),
+        cuota de manejo y configuración de scraping.
+      responses:
+        '200':
+          description: Lista de tarjetas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tarjeta'
+              example:
+                - id: 1
+                  franquicia: "Mastercard"
+                  fechaCreacion: "2024-01-15T10:30:00"
+                  descripcion: "Tarjeta Oro Bancolombia"
+                  tasaInteresCompra: 1.8895
+                  tasaInteresAvance: 1.8895
+                  cuotaManejo: 0.0
+                  urlInfo: "https://www.bancolombia.com/personas/tarjetas-de-credito/mastercard/oro"
+                  ultimaActualizacionTasas: "2026-03-01T23:39:06"
+                  extractTasas: true
+
+  /api/tarjetas/balance:
+    get:
+      tags: [Tarjetas]
+      summary: Balance de saldo pendiente por tarjeta
+      description: Suma el saldo restante de las cuotas pendientes para cada tarjeta en un mes/año dado.
+      parameters:
+        - name: mes
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+          example: 4
+        - name: year
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 2024
+      responses:
+        '200':
+          description: Balance por tarjeta
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BalanceTarjeta'
+        '400':
+          description: Faltan parámetros mes o year
+
+  /api/tarjetas/pagos:
+    get:
+      tags: [Tarjetas]
+      summary: Pago total mensual por tarjeta
+      description: Calcula el monto total a pagar por cada tarjeta en el mes actual.
+      responses:
+        '200':
+          description: Lista de pagos por tarjeta
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PagoCreditosMesTarjeta'
+
+  /api/tarjetas/pagos/{id}:
+    get:
+      tags: [Tarjetas]
+      summary: Detalle de pago mensual por tarjeta
+      description: Retorna el detalle de cuotas a pagar para una tarjeta específica en un mes/año dado.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID de la tarjeta
+          schema:
+            type: integer
+          example: 1
+        - name: mes
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 4
+        - name: year
+          in: query
+          required: true
+          schema:
+            type: integer
+          example: 2024
+      responses:
+        '200':
+          description: Detalle de cuotas del mes para la tarjeta
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CuotaDetalle'
+        '400':
+          description: Faltan parámetros mes o year
+
+  /api/tarjetas/actualizar-tasas:
+    post:
+      tags: [Tarjetas]
+      summary: Actualizar tasas de todas las tarjetas (scraping)
+      description: |
+        Recorre todas las tarjetas que tienen `extract_tasas = true` y `url_info` configurada.
+
+        **Restricción semanal:** Si la `ultima_actualizacion_tasas` tiene menos de 7 días,
+        la tarjeta se omite (`estado: OMITIDA`). Para forzar la actualización de una tarjeta
+        específica independientemente del tiempo, usar `POST /api/tarjetas/{id}/actualizar-tasas`.
+
+        El scraping extrae: tasa interés mensual/anual de compras y avances, cuota de manejo.
+      responses:
+        '200':
+          description: Resumen del proceso de scraping
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoScraping'
+        '500':
+          description: Error en el proceso de scraping
+
+  /api/tarjetas/{id}/actualizar-tasas:
+    post:
+      tags: [Tarjetas]
+      summary: Forzar actualización de tasas para una tarjeta
+      description: |
+        Ejecuta el scraping para una tarjeta específica **ignorando la restricción semanal**.
+        La tarjeta debe tener `extract_tasas = true` y `url_info` configurada.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID de la tarjeta
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Tasas actualizadas correctamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultadoScrapingItem'
+        '400':
+          description: La tarjeta no tiene scraping habilitado o URL configurada
+        '404':
+          description: Tarjeta no encontrada
+        '422':
+          description: No se pudieron extraer tasas del HTML
+
+  # ═══ PERSONAS ════════════════════════════════════════════════════════════
+  /api/personas:
+    get:
+      tags: [Personas]
+      summary: Listar personas
+      description: Retorna todas las personas registradas.
+      responses:
+        '200':
+          description: Lista de personas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Persona'
+
+  # ═══ COMPRAS CRÉDITO ════════════════════════════════════════════════════
+  /api/compras-credito:
+    get:
+      tags: [Compras Crédito]
+      summary: Listar compras a crédito
+      description: Retorna todas las compras a crédito registradas.
+      responses:
+        '200':
+          description: Lista de compras
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CompraCredito'
+
+    post:
+      tags: [Compras Crédito]
+      summary: Crear compra a crédito
+      description: |
+        Registra una nueva compra a crédito y genera automáticamente el calendario
+        de cuotas con amortización (tabla de cuotas con interés compuesto mensual).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompraCreditoCreate'
+            example:
+              concepto: "Televisor LG 55"
+              valorCompra: 1800000.0
+              fechaCompra: "2024-04-05"
+              numeroCuotas: 24
+              interes: 1.8895
+              descripcion: "Compra en Alkosto"
+              estado: "Pendiente"
+              tarjeta: 1
+      responses:
+        '200':
+          description: Compra creada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MensajeExito'
+        '400':
+          description: Datos inválidos
+
+    put:
+      tags: [Compras Crédito]
+      summary: Actualizar compra a crédito
+      description: |
+        Actualiza los datos de una compra existente y **recalcula las cuotas** automáticamente.
+        Solo modifica: concepto, descripción, fecha compra, valor, cuotas, interés y tarjeta.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompraCreditoUpdate'
+      responses:
+        '200':
+          description: Compra actualizada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MensajeExito'
+        '400':
+          description: Datos inválidos
+
+  /api/compras-credito/{id}:
+    delete:
+      tags: [Compras Crédito]
+      summary: Eliminar compra a crédito
+      description: |
+        Elimina una compra a crédito en cascada:
+        1. Elimina los **responsables** asociados
+        2. Elimina las **cuotas** asociadas
+        3. Elimina la **compra** principal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 5
+      responses:
+        '200':
+          description: Compra eliminada exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MensajeExito'
+        '500':
+          description: Error al eliminar
+
+  /api/compras-credito/detalle/{id}:
+    get:
+      tags: [Compras Crédito]
+      summary: Obtener compra por ID
+      description: Retorna el detalle de una compra a crédito específica.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Detalle de la compra
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompraCredito'
+
+  /api/compras-credito/upload-csv:
+    post:
+      tags: [Compras Crédito]
+      summary: Carga masiva de compras desde CSV
+      description: |
+        Sube un archivo CSV con múltiples compras a crédito y las registra en lote.
+
+        **Columnas requeridas del CSV** (case-insensitive):
+        | Columna | Tipo | Descripción |
+        |---|---|---|
+        | Fecha Compra | Fecha | Opcional — usa fecha actual si está vacío |
+        | Concepto | String | **Obligatorio** |
+        | Valor | Number | **Obligatorio** |
+        | Cuotas | Integer | **Obligatorio** |
+        | Tarjeta | String | **Obligatorio** — acepta ID numérico o nombre de franquicia |
+        | Interes | Number | **Obligatorio** |
+        | descripcion | String | Opcional |
+        | estado | String | Opcional — default: Pendiente |
+
+        **Formatos soportados:**
+        - Separador: `,` o `;` (detección automática)
+        - Decimales: punto (`.`) o coma (`,`)
+        - Fechas: `2024-04-05`, `05/04/2024`, `05-04-2024`, `05,04,2024`
+
+        **Respuesta:** El mismo CSV con una columna adicional `Resultado` indicando éxito o error por fila.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Archivo CSV a procesar
+      responses:
+        '200':
+          description: CSV procesado — se descarga el archivo con la columna Resultado
+          content:
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: No se encontró el archivo o error al leer el CSV
+
+  /api/recalcular-compra-credito:
+    post:
+      tags: [Compras Crédito]
+      summary: Recalcular cuotas de una compra
+      description: |
+        Recalcula y regenera el calendario de cuotas para una compra existente,
+        útil después de modificar interés, valor o número de cuotas.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompraCreditoUpdate'
+      responses:
+        '200':
+          description: Lista de cuotas recalculadas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CuotaDetalle'
+
+  /api/compras-credito/pagar-productos:
+    post:
+      tags: [Compras Crédito]
+      summary: Ejecutar pago de productos de tarjeta
+      description: Marca como pagadas las cuotas del mes actual de todas las tarjetas.
+      responses:
+        '200':
+          description: Pagos ejecutados
+
+  /api/compras-credito/ajustar-interes-compras/{id}:
+    post:
+      tags: [Compras Crédito]
+      summary: Ajustar interés de compras de una tarjeta
+      description: Aplica el ajuste de interés a todas las compras activas de la tarjeta indicada.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID de la tarjeta
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Estado cambiado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MensajeExito'
+
+  # ═══ CUOTAS ══════════════════════════════════════════════════════════════
+  /api/compras-credito/{id}/cuotas:
+    get:
+      tags: [Cuotas]
+      summary: Listar cuotas de una compra
+      description: |
+        Retorna el calendario completo de cuotas para la compra indicada.
+        Cada cuota incluye: número, fecha de pago, saldo restante,
+        interés pagado, aporte a capital, pago total y estado.
+
+        > **Nota:** En las rutas esta operación está mapeada en `GET /api/compras-credito/{id}`
+        >  (sin el sufijo `/cuotas`) por compatibilidad con el router actual.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID de la compra
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Lista de cuotas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CuotaDetalle'
+
+  # ═══ RESPONSABLES ════════════════════════════════════════════════════════
+  /api/compras-credito/{id}/responsables:
+    get:
+      tags: [Responsables]
+      summary: Listar responsables de una compra
+      description: Retorna los responsables de pago registrados para una compra específica.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID de la compra
+          schema:
+            type: integer
+          example: 1
+      responses:
+        '200':
+          description: Lista de responsables
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ResponsableCompraCredito'
+
+  /api/compras-credito/responsables:
+    post:
+      tags: [Responsables]
+      summary: Crear responsable de compra
+      description: Registra un nuevo responsable de pago para una compra a crédito.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResponsableCreate'
+            example:
+              persona: 2
+              porcentajePago: 50.0
+              cantidadPago: 42500.0
+              cantidadCuotas: 36
+              compraCredito: 1
+      responses:
+        '200':
+          description: Responsable creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MensajeExito'
+        '400':
+          description: Datos inválidos
+
+    put:
+      tags: [Responsables]
+      summary: Actualizar responsable de compra
+      description: Actualiza los datos de un responsable existente.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResponsableUpdate'
+      responses:
+        '200':
+          description: Responsable actualizado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MensajeExito'
+        '400':
+          description: Datos inválidos
+
+  /api/compras-credito/responsables/{id}:
+    delete:
+      tags: [Responsables]
+      summary: Eliminar responsable de compra
+      description: Elimina un responsable de pago por su ID.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID del responsable
+          schema:
+            type: integer
+          example: 3
+      responses:
+        '200':
+          description: Responsable eliminado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MensajeExito'
+
+  # ═══ PRÉSTAMOS ═══════════════════════════════════════════════════════════
+  /api/prestamos:
+    get:
+      tags: [Préstamos]
+      summary: Listar préstamos
+      description: Retorna todos los préstamos registrados.
+      responses:
+        '200':
+          description: Lista de préstamos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Prestamo'
+
+    post:
+      tags: [Préstamos]
+      summary: Crear préstamo
+      description: Registra un nuevo préstamo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Prestamo'
+            example:
+              valorPrestado: 500000.0
+              concepto: "Préstamo para viaje"
+              fechaCobro: "2024-06-01"
+              responsable: 2
+              estado: "Pendiente"
+              comentarios: ""
+      responses:
+        '200':
+          description: Préstamo creado exitosamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MensajeExito'
+
+  # ═══ PAGOS ════════════════════════════════════════════════════════════════
+  /api/pagos/personas:
+    get:
+      tags: [Pagos]
+      summary: Pagos mensuales por persona
+      description: |
+        Retorna el total de pagos mensuales agrupados por persona.
+        Puede filtrar por mes y año mediante query params.
+      parameters:
+        - name: mes
+          in: query
+          required: false
+          schema:
+            type: integer
+          example: 4
+        - name: year
+          in: query
+          required: false
+          schema:
+            type: integer
+          example: 2024
+      responses:
+        '200':
+          description: Pagos por persona
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PagoMensualPersona'
+
+  /api/pagos/personas/{id}:
+    get:
+      tags: [Pagos]
+      summary: Detalle de pagos mensuales de un responsable
+      description: Retorna el detalle de las cuotas a pagar para un responsable específico.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: ID del responsable / persona
+          schema:
+            type: integer
+          example: 2
+        - name: mes
+          in: query
+          required: false
+          schema:
+            type: integer
+          example: 4
+        - name: year
+          in: query
+          required: false
+          schema:
+            type: integer
+          example: 2024
+      responses:
+        '200':
+          description: Detalle de pagos del responsable
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CuotaDetalle'
+
