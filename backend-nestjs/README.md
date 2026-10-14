@@ -98,6 +98,36 @@ TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/finanzas_test np
 
 Sin `TEST_DATABASE_URL` esas suites se omiten (`npm test` no las necesita).
 
+## Docker local con reconstrucción automática (API + Angular)
+
+`../docker-compose.local.yml` construye **las dos imágenes** (esta API y `../../finanzas-mf`), las ejecuta dockerizadas contra el
+**mismo Supabase que usa Scala** y, con *Compose Watch*, **reconstruye la imagen y recrea el contenedor al guardar un cambio**
+(las capas de dependencias quedan en caché: ~25 s por ciclo).
+
+```bash
+cd finanzas                                                  # donde está docker-compose.local.yml (y el .env de Scala)
+docker compose -f docker-compose.local.yml watch             # construye, arranca y vigila cambios (Ctrl+C deja los contenedores corriendo)
+docker compose -f docker-compose.local.yml up -d --build     # alternativa: construir y arrancar sin vigilar
+docker compose -f docker-compose.local.yml logs -f api       # logs de la API
+docker compose -f docker-compose.local.yml down              # detener y borrar los contenedores
+```
+
+| Qué | URL |
+|---|---|
+| Frontend Angular (nginx; `/api` se reenvía a la API, mismo origen, sin CORS) | http://localhost:8085 |
+| API NestJS | http://localhost:9000/health · Swagger http://localhost:9000/api/docs |
+
+- **Configuración = la de Scala, sin cambios.** El contenedor lee el `.env` de `finanzas/` (`DB_URL`, `DB_USER`, `DB_PASSWORD`,
+  `APP_SECRET`, `JWT_EXPIRATION`); `src/config/scala-env.ts` deriva de ahí `DATABASE_URL`/`DIRECT_URL` de Prisma
+  (`prepareThreshold=0` ⇒ `pgbouncer=true`, pool de 5 como HikariCP, contraseña codificada). `APP_SECRET` sigue siendo la clave JWT,
+  así que los tokens existentes siguen valiendo. Un `DATABASE_URL` explícito siempre tiene prioridad.
+- Variables solo de NestJS (`WEBHOOK_SECRET`, `DEFAULT_OWNER_USER_ID`, `DEFAULT_TRM_USD`…): copiar `.env.local.example` a `.env.local`.
+- Puertos ocupados: `WEB_PORT=8090 API_PORT=9100 docker compose -f docker-compose.local.yml watch`
+  (8080, 8082, 8090, 8069 y 5432 suelen estar tomados por otros proyectos locales).
+- **No hay base local: es el Supabase real.** Lo que registres desde esta pila queda guardado allí.
+- Qué vigila: `src/`, `prisma/`, `public/`, `package*.json`, `tsconfig*.json`, `nest-cli.json` y `Dockerfile` (API);
+  `src/`, `public/`, `package*.json`, `angular.json`, `tsconfig*.json`, `nginx.local.conf` y `Dockerfile` (frontend). Los `*.spec.ts` no reconstruyen.
+
 ## Docker / AWS
 
 ```bash

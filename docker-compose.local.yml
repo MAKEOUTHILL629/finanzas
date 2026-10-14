@@ -1,0 +1,108 @@
+# =============================================================================
+# Pila local dockerizada: API NestJS + frontend Angular (nginx), contra el MISMO Supabase que usa Scala.
+#
+#   docker compose -f docker-compose.local.yml watch              # construye, arranca y RECONSTRUYE al detectar cambios
+#   docker compose -f docker-compose.local.yml up -d --build      # solo construir y arrancar (sin vigilar cambios)
+#   docker compose -f docker-compose.local.yml down               # detener y borrar los contenedores
+#
+#   Frontend   http://localhost:8085          (nginx: sirve Angular y reenvía /api → api:9000, mismo origen, sin CORS)
+#   API        http://localhost:9000/health   ·   Swagger: http://localhost:9000/api/docs
+#   Otros puertos: WEB_PORT=8090 API_PORT=9100 docker compose -f docker-compose.local.yml watch
+#
+# Requisitos: Docker Desktop con Compose >= 2.22 y los repositorios `finanzas` y `finanzas-mf` en carpetas hermanas.
+#
+# Configuración (nada de esto se versiona):
+#   .env         el de Scala, sin cambios: DB_URL, DB_USER, DB_PASSWORD, APP_SECRET, JWT_EXPIRATION.
+#                La API NestJS deriva de ahí DATABASE_URL (ver backend-nestjs/src/config/scala-env.ts).
+#   .env.local   opcional, solo para NestJS: WEBHOOK_SECRET, DEFAULT_OWNER_USER_ID, DEFAULT_TRM_USD… (ver .env.local.example)
+#
+# OJO: la base es la de Supabase de verdad (no hay copia local). Lo que registres desde esta pila queda guardado allí.
+# =============================================================================
+name: finanzas-local
+
+services:
+  api:
+    build:
+      context: ./backend-nestjs
+      dockerfile: Dockerfile
+    image: finanzas-api-nestjs:local
+    container_name: finanzas-api-nestjs
+    env_file:
+      - .env
+      - path: .env.local
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "9000"
+      TZ: America/Bogota
+      # El navegador entra por el puerto del frontend (proxy de nginx, mismo origen); esto solo cubre llamadas directas a la API.
+      CORS_ORIGINS: http://localhost:${WEB_PORT:-8085},http://localhost:4200,http://localhost:3000
+    ports:
+      - "${API_PORT:-9000}:9000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9000/health >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    # `docker compose watch`: ante un cambio se reconstruye la IMAGEN (las capas de dependencias quedan en caché)
+    # y se recrea el contenedor. Los *.spec.ts no afectan a la imagen, así que se ignoran.
+    develop:
+      watch:
+        - action: rebuild
+          path: ./backend-nestjs/src
+          ignore:
+            - "**/*.spec.ts"
+        - action: rebuild
+          path: ./backend-nestjs/prisma
+        - action: rebuild
+          path: ./backend-nestjs/public
+        - action: rebuild
+          path: ./backend-nestjs/package.json
+        - action: rebuild
+          path: ./backend-nestjs/package-lock.json
+        - action: rebuild
+          path: ./backend-nestjs/tsconfig.json
+        - action: rebuild
+          path: ./backend-nestjs/tsconfig.build.json
+        - action: rebuild
+          path: ./backend-nestjs/nest-cli.json
+        - action: rebuild
+          path: ./backend-nestjs/Dockerfile
+
+  web:
+    build:
+      context: ../finanzas-mf
+      dockerfile: Dockerfile
+      args:
+        NGINX_CONF: nginx.local.conf
+    image: finanzas-web:local
+    container_name: finanzas-web
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-8085}:80" # 80 y 8080 suelen estar ocupados (Kubernetes/otros proyectos)
+    restart: unless-stopped
+    develop:
+      watch:
+        - action: rebuild
+          path: ../finanzas-mf/src
+          ignore:
+            - "**/*.spec.ts"
+        - action: rebuild
+          path: ../finanzas-mf/public
+        - action: rebuild
+          path: ../finanzas-mf/package.json
+        - action: rebuild
+          path: ../finanzas-mf/package-lock.json
+        - action: rebuild
+          path: ../finanzas-mf/angular.json
+        - action: rebuild
+          path: ../finanzas-mf/tsconfig.json
+        - action: rebuild
+          path: ../finanzas-mf/tsconfig.app.json
+        - action: rebuild
+          path: ../finanzas-mf/nginx.local.conf
+        - action: rebuild
+          path: ../finanzas-mf/Dockerfile

@@ -1,3 +1,4 @@
+import './config/scala-env.register'; // primero: deriva DATABASE_URL de DB_URL/DB_USER/DB_PASSWORD si hace falta
 import './config/decimal.config';
 import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
