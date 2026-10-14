@@ -28,6 +28,10 @@ export function reescribirAliasV2(url: string): string {
 
 /** CORS (equivale a `play.filters.cors` de application.conf) y estáticos (`/assets/*`). */
 export function configureApp(app: NestExpressApplication): void {
+  // Express limita el body a 100kb por defecto -> PayloadTooLargeError. Vercel permite máx. ~4.5MB.
+  const limit = process.env.BODY_LIMIT ?? '4mb';
+  app.useBodyParser('json', { limit });
+  app.useBodyParser('urlencoded', { limit, extended: true });
   app.use((req: { url: string }, _res: unknown, next: () => void) => {
     req.url = reescribirAliasV2(req.url);
     next();
