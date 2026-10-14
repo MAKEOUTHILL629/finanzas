@@ -3,6 +3,12 @@ import { IsBoolean, IsEnum, IsOptional, IsString, Length, Matches, MaxLength } f
 import { TipoCategoria, TipoCuentaFinanciera } from '../../../common/enums/finance.enums';
 import { IsMoney } from '../../../common/validators/is-money.decorator';
 
+/**
+ * Últimos 4 dígitos del producto. Una cuenta puede llevar varios (cuenta + tarjeta débito): `3698,4278` o `3698 4278`.
+ * El parser de correos busca el número del correo entre ellos.
+ */
+export const ULTIMOS_4 = /^\d{4}(?:\s*[,;\s]\s*\d{4})*$/;
+
 export class CreateCuentaFinancieraDto {
   @ApiProperty({ example: 'Bancolombia Ahorros' })
   @IsString()
@@ -20,7 +26,8 @@ export class CreateCuentaFinancieraDto {
 
   @ApiPropertyOptional({ example: '1234', description: 'Usado por el parser de correos para identificar la cuenta' })
   @IsOptional()
-  @Matches(/^\d{4}$/, { message: 'ultimos4Digitos debe tener 4 dígitos' })
+  @MaxLength(60)
+  @Matches(ULTIMOS_4, { message: 'ultimos4Digitos debe tener 4 dígitos (o varios grupos de 4 separados por coma, p. ej. "3698,4278")' })
   ultimos4Digitos?: string;
 
   @ApiPropertyOptional({ example: 'COP', description: "Por defecto 'COP'" })
@@ -58,7 +65,8 @@ export class UpdateCuentaFinancieraDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Matches(/^\d{4}$/, { message: 'ultimos4Digitos debe tener 4 dígitos' })
+  @MaxLength(60)
+  @Matches(ULTIMOS_4, { message: 'ultimos4Digitos debe tener 4 dígitos (o varios grupos de 4 separados por coma, p. ej. "3698,4278")' })
   ultimos4Digitos?: string;
 
   @ApiPropertyOptional()

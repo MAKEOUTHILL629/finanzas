@@ -277,6 +277,45 @@
         ]
       }
     },
+    "/api/tarjetas/{id}": {
+      "put": {
+        "operationId": "TarjetasV2Controller_actualizar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActualizarTarjetaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Edita la configuración de una tarjeta: día de corte, límite de pago, cupo, tasas…",
+        "tags": [
+          "Tarjetas v2"
+        ]
+      }
+    },
     "/api/tarjetas/{id}/pagar-extracto": {
       "post": {
         "operationId": "TarjetasV2Controller_pagarExtracto",
@@ -2689,6 +2728,63 @@
       }
     },
     "schemas": {
+      "ActualizarTarjetaDto": {
+        "type": "object",
+        "properties": {
+          "franquicia": {
+            "type": "string",
+            "example": "Visa"
+          },
+          "descripcion": {
+            "type": "string",
+            "example": "Oro *1927",
+            "description": "Los últimos 4 dígitos aquí permiten identificar la tarjeta en los correos del banco"
+          },
+          "diaCorte": {
+            "type": "number",
+            "example": 15,
+            "description": "Día del mes en que corta el extracto (1-31)"
+          },
+          "diaLimitePago": {
+            "type": "number",
+            "example": 5,
+            "description": "Día del mes límite para pagar (1-31)"
+          },
+          "cupoTotal": {
+            "type": "object",
+            "example": "12000000.00",
+            "description": "Cupo total (máx. 2 decimales)"
+          },
+          "permiteDolares": {
+            "type": "boolean",
+            "example": false
+          },
+          "tasaInteresCompra": {
+            "type": "object",
+            "example": "1.8895",
+            "description": "Tasa mensual de compras en % (máx. 4 decimales)"
+          },
+          "tasaInteresAvance": {
+            "type": "object",
+            "example": "2.1",
+            "description": "Tasa mensual de avances en % (máx. 4 decimales)"
+          },
+          "cuotaManejo": {
+            "type": "object",
+            "example": "25000",
+            "description": "Cuota de manejo (máx. 2 decimales)"
+          },
+          "urlInfo": {
+            "type": "string",
+            "example": "https://www.bancolombia.com/tarifas"
+          },
+          "extractTasas": {
+            "type": "boolean",
+            "example": true,
+            "description": "Incluir esta tarjeta al actualizar tasas por web scraping"
+          }
+        }
+      },
       "PagarExtractoDto": {
         "type": "object",
         "properties": {

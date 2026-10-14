@@ -1,7 +1,8 @@
-import { Body, Controller, Get, HttpCode, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import { ApiBearerAuth, ApiExcludeEndpoint, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
+import { ActualizarTarjetaDto } from './dto/actualizar-tarjeta.dto';
 import { PagarExtractoDto } from './dto/pagar-extracto.dto';
 import { TarjetasService } from './tarjetas.service';
 
@@ -17,6 +18,26 @@ export class TarjetasV2Controller {
   resumenMensual(@Query('periodo') periodo: string | undefined, @CurrentUser('userId') userId: bigint) {
     if (!periodo) throw datosInvalidos({ periodo: ['periodo es obligatorio (YYYY-MM)'] });
     return this.tarjetas.resumenMensual(periodo, userId);
+  }
+
+  @Put(':id')
+  @ApiOperation({ summary: 'Edita la configuración de una tarjeta: día de corte, límite de pago, cupo, tasas…' })
+  actualizar(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ActualizarTarjetaDto,
+    @CurrentUser('userId') userId: bigint,
+  ) {
+    return this.tarjetas.actualizar(id, dto, userId);
+  }
+
+  @Patch(':id')
+  @ApiExcludeEndpoint()
+  actualizarParcial(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ActualizarTarjetaDto,
+    @CurrentUser('userId') userId: bigint,
+  ) {
+    return this.tarjetas.actualizar(id, dto, userId);
   }
 
   @Post(':id/pagar-extracto')

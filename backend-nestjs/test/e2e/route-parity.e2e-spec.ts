@@ -137,6 +137,8 @@ describe('Paridad de rutas con conf/routes', () => {
       ['put', '/api/transacciones/1'],
       ['put', '/api/cortes-cobro/1'],
       ['put', '/api/compras-credito/1'],
+      ['put', '/api/tarjetas/1'],
+      ['patch', '/api/tarjetas/1'],
     ] as const) {
       const res = await (http as any)[metodo](ruta).send({});
       expect([metodo, ruta, res.status === 404]).toEqual([metodo, ruta, false]);
@@ -155,6 +157,7 @@ describe('Paridad de rutas con conf/routes', () => {
       '/api/auth/login',
       '/api/compras-credito/{id}/confirmar-trm',
       '/api/tarjetas/{id}/pagar-extracto',
+      '/api/tarjetas/{id}',
       '/api/tarjetas/resumen-mensual',
       '/api/cuentas-financieras',
       '/api/categorias',

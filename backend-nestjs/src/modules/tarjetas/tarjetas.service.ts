@@ -3,10 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma, Tarjetas } from '@prisma/client';
 import { Decimal } from '../../config/decimal.config';
 import { isValidPeriodo } from '../../common/utils/date.util';
-import { money, rate, toDb, toDbMoney, toDecimal } from '../../common/utils/decimal.util';
+import { money, rate, toDb, toDbMoney, toDbRate, toDecimal } from '../../common/utils/decimal.util';
 import { formatLegacyIso, idNum, numOrNull, timestampToDayMillis } from '../../common/utils/legacy-format.util';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActualizarTarjetaDto } from './dto/actualizar-tarjeta.dto';
 import { PagarExtractoDto } from './dto/pagar-extracto.dto';
 import { ResultadoScrapingTarjeta, TarjetaScrapeable, WebScrapingService } from './web-scraping.service';
 
@@ -48,23 +49,33 @@ export class TarjetasService {
       where: { owner_user_id: ownerUserId },
       orderBy: { id: 'asc' },
     });
-    return tarjetas.map((t) => ({
-      id: idNum(t.id),
-      franquicia: t.franquicia,
-      fechaCreacion: this.fechaCreacionIso(t),
-      descripcion: t.descripcion,
-      tasaInteresCompra: numOrNull(t.tasa_interes_compra),
-      tasaInteresAvance: numOrNull(t.tasa_interes_avance),
-      cuotaManejo: numOrNull(t.cuota_manejo),
-      urlInfo: t.url_info,
-      ultimaActualizacionTasas: formatLegacyIso(t.ultima_actualizacion_tasas),
-      extractTasas: t.extract_tasas,
-      // Campos nuevos del esquema Supabase (no existían en el legacy; Angular los ignora).
-      diaCorte: t.dia_corte,
-      diaLimitePago: t.dia_limite_pago,
-      cupoTotal: numOrNull(t.cupo_total),
-      permiteDolares: t.permite_dolares,
-    }));
+    return tarjetas.map((t) => this.tarjetaJson(t));
+  }
+
+  /**
+   * `PUT /api/tarjetas/:id` — edita la configuración de una tarjeta (día de corte, límite de pago, cupo, tasas…).
+   * Solo se escriben los campos recibidos. Devuelve la tarjeta con la misma forma que `GET /api/tarjetas`.
+   */
+  async actualizar(id: number, dto: ActualizarTarjetaDto, ownerUserId: bigint) {
+    const actual = await this.prisma.tarjetas.findFirst({ where: { id: BigInt(id), owner_user_id: ownerUserId } });
+    if (!actual) throw new HttpException({ message: `Tarjeta ${id} no encontrada` }, HttpStatus.NOT_FOUND);
+
+    const data: Prisma.TarjetasUncheckedUpdateInput = {};
+    if (dto.franquicia !== undefined) data.franquicia = dto.franquicia.trim();
+    if (dto.descripcion !== undefined) data.descripcion = dto.descripcion.trim();
+    if (dto.diaCorte !== undefined) data.dia_corte = dto.diaCorte;
+    if (dto.diaLimitePago !== undefined) data.dia_limite_pago = dto.diaLimitePago;
+    if (dto.cupoTotal !== undefined) data.cupo_total = toDbMoney(toDecimal(dto.cupoTotal));
+    if (dto.permiteDolares !== undefined) data.permite_dolares = dto.permiteDolares;
+    if (dto.tasaInteresCompra !== undefined) data.tasa_interes_compra = toDbRate(toDecimal(dto.tasaInteresCompra));
+    if (dto.tasaInteresAvance !== undefined) data.tasa_interes_avance = toDbRate(toDecimal(dto.tasaInteresAvance));
+    if (dto.cuotaManejo !== undefined) data.cuota_manejo = toDbMoney(toDecimal(dto.cuotaManejo));
+    if (dto.urlInfo !== undefined) data.url_info = dto.urlInfo.trim() || null;
+    if (dto.extractTasas !== undefined) data.extract_tasas = dto.extractTasas;
+
+    const guardada =
+      Object.keys(data).length > 0 ? await this.prisma.tarjetas.update({ where: { id: actual.id }, data }) : actual;
+    return this.tarjetaJson(guardada);
   }
 
   /** `GET /api/tarjetas/balance?mes&year` — saldo restante de cuotas pendientes por tarjeta. */
@@ -286,6 +297,27 @@ export class TarjetasService {
   }
 
   // ───────────────────────────── helpers ─────────────────────────────
+
+  /** JSON de `tarjetaEscritura` (legacy) + los campos del esquema Supabase. */
+  private tarjetaJson(t: Tarjetas) {
+    return {
+      id: idNum(t.id),
+      franquicia: t.franquicia,
+      fechaCreacion: this.fechaCreacionIso(t),
+      descripcion: t.descripcion,
+      tasaInteresCompra: numOrNull(t.tasa_interes_compra),
+      tasaInteresAvance: numOrNull(t.tasa_interes_avance),
+      cuotaManejo: numOrNull(t.cuota_manejo),
+      urlInfo: t.url_info,
+      ultimaActualizacionTasas: formatLegacyIso(t.ultima_actualizacion_tasas),
+      extractTasas: t.extract_tasas,
+      // Campos nuevos del esquema Supabase (no existían en el legacy; Angular los ignora).
+      diaCorte: t.dia_corte,
+      diaLimitePago: t.dia_limite_pago,
+      cupoTotal: numOrNull(t.cupo_total),
+      permiteDolares: t.permite_dolares,
+    };
+  }
 
   private fechaCreacionIso(t: Tarjetas): string | null {
     const dia = timestampToDayMillis(t.created_at);

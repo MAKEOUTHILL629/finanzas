@@ -105,6 +105,7 @@ las rutas actuales. Alias: `/api/v2/subledger/*` → `/api/ledger/*`, `/api/v2/d
 |-------|------|--------|-----------------|
 | PATCH | `/api/compras-credito/:id/confirmar-trm` | compras-credito | `sp_actualizar_trm_compra_usd` (Trigger 8 sincroniza sub-ledger) |
 | PUT | `/api/compras-credito/:id` | compras-credito | misma lógica que `PUT /api/compras-credito` (el `id` va en la ruta); registrada después de `/responsables` para no taparla |
+| PUT | `/api/tarjetas/:id` | tarjetas | edita `franquicia`, `descripcion` (aquí van los últimos 4, D23), `diaCorte`, `diaLimitePago`, `cupoTotal`, `permiteDolares`, tasas y `cuotaManejo`; todo opcional, solo cambia lo que llega (D28) |
 | POST | `/api/tarjetas/:id/pagar-extracto` | tarjetas | `sp_pagar_extracto_tarjeta` |
 | GET | `/api/tarjetas/resumen-mensual?periodo` | tarjetas | consulta 7.3 (corregida, D16) |
 | CRUD | `/api/cuentas-financieras` | cuentas-financieras | `saldo_actual` solo lo toca el Trigger 2 |
@@ -162,6 +163,9 @@ las rutas actuales. Alias: `/api/v2/subledger/*` → `/api/ledger/*`, `/api/v2/d
 | D25 | `PAGO_TARJETA` exige `tarjeta_pagada_id`, pero el correo del débito en cuenta puede no identificar la tarjeta. | Solo para `EMAIL_AUTO` se permite crear el pago sin tarjeta (motivo `pago_tarjeta_sin_tarjeta_identificada`) para que el saldo de la cuenta sea correcto; el abono de la tarjeta (otro correo) la completa si llega. |
 | D26 | El webhook no tiene usuario autenticado (Apps Script). | `x-webhook-secret` ⇒ actúa como `DEFAULT_OWNER_USER_ID`. **Limitación:** un secreto = un usuario; para varios usuarios habría que emitir un secreto por usuario. Comparación en tiempo constante (sha256 + `timingSafeEqual`); secreto incorrecto → 401 `{status:'error',message:'Invalid webhook secret'}`. |
 | D27 | Observado en Angular (previo a esta migración, sin relación con el backend): `NG0100 ExpressionChangedAfterItHasBeenChecked` en `AppComponent` (modo dev) y una petición `GET /api/compras-credito/undefined/responsables` (400) al abrir el detalle de una compra, antes de que el componente hijo reciba el `id`. | Sin cambios (el legacy respondía igual: 400 por `Int` inválido). Pendiente de corregir en el frontend. |
+| D28 | **Editar una tarjeta.** Scala solo tenía `POST` (crear) y las tasas se actualizaban por scraping; no había forma de corregir `diaCorte`, `diaLimitePago`, cupo o la descripción con los últimos 4 dígitos (que el parser de correos necesita, D23). Con `dia_corte` NULL el trigger `trg_set_periodo_cuota` no puede asignar `periodo_facturacion` a las cuotas nuevas. | `PUT /api/tarjetas/:id` (`PATCH` oculto con el mismo cuerpo), `ActualizarTarjetaDto` con todo opcional. Cambiar `diaCorte` **no recalcula** las cuotas ya guardadas: solo afecta a las que se inserten/actualicen después. Angular: pantalla `/tarjetas`. |
+| D29 | `ultimos4Digitos` solo aceptaba exactamente 4 dígitos, pero D23 define que una cuenta puede llevar varios (cuenta + tarjeta débito) y el parser de correos ya los separaba. | El DTO acepta uno o varios grupos de 4 separados por coma, punto y coma o espacio (`ULTIMOS_4`, máx. 60 caracteres): `3698`, `3698,4278`, `3698 4278`. Cualquier otra cosa (`12345`, `abcd`) sigue siendo 400. |
+| D30 | **Estado de los datos de Supabase al construir las pantallas de Angular (14/10/2026).** Sin cuentas, categorías, transacciones, recurrentes ni notificaciones; sub-ledger `MovimientosDeudaPersona` vacío; 88 préstamos (81 `Pagado`, 7 `Pendiente`, todos `POR_COBRAR`), 172 aprobaciones (9 pendientes), 13 cortes, 22 obligaciones y 288 días de aportes. `Tarjetas.dia_corte` es NULL. | Las pantallas nuevas tienen estados vacíos explicados y no inventan datos. `/estado-cuenta` queda vacío hasta ejecutar el paso 3 del backfill (cargar el sub-ledger), que **no se ha ejecutado** y requiere autorización explícita. «Pagar extracto» y los abonos necesitan al menos una cuenta (se crea desde `/cuentas`; `/categorias` ofrece sembrar categorías sugeridas solo tras confirmar). |
 
 ---
 
@@ -170,16 +174,17 @@ las rutas actuales. Alias: `/api/v2/subledger/*` → `/api/ledger/*`, `/api/v2/d
 | Capa | Archivos | Resultado |
 |------|----------|-----------|
 | Compilación | `npm run build` (+ `npx prisma generate`) | 0 errores |
-| Unitarias + e2e HTTP (Prisma mockeado) | `test/*.spec.ts`, `test/e2e/*` — 16 suites | **431 pruebas OK** (incluye normalizador Bancolombia, `SyncBatchService`, guard del webhook, alias `/api/v2`, `conciliar` extendido, aprobación por persona) |
+| Unitarias + e2e HTTP (Prisma mockeado) | `test/*.spec.ts`, `test/e2e/*` — 19 suites | **464 pruebas OK** (incluye normalizador Bancolombia, `SyncBatchService`, guard del webhook, alias `/api/v2`, `conciliar` extendido, aprobación por persona) |
 | Contra **PostgreSQL 17 real** con triggers/SPs/vistas | `test/integration/*.int-spec.ts` — 5 suites | **57 pruebas OK** (`npm run test:integration`); `sync-batch.int-spec.ts` cubre lote mixto, idempotencia, **carrera de dos lotes idénticos**, deduplicación débito/abono, multi-tenant y conciliación (Regla 4 + Trigger 6) |
 | Humo del binario compilado | `node dist/main.js` + HTTP real | `/api/docs` 200 (61 rutas), webhook: sin credenciales 401, secreto malo 401, secreto bueno 200, reintento idempotente; preflight CORS permite `x-webhook-secret` |
-| Frontend | `finanzas-mf`: `ng build` (development, production y docker) · `ng test` (39 pruebas, Edge headless) | OK |
+| Frontend | `finanzas-mf`: `ng build` (development, production y docker) · `ng test` (**241 pruebas**, Edge headless: servicios HTTP, lógica pura de cada pantalla, formularios y humo de renderizado de todas las rutas nuevas) | OK |
 | Angular ↔ NestJS en navegador | `npm start` (proxy `/api` → `:9000`) + login real: lista de compras, detalle, préstamos, pagos del mes, pagos por persona | Todas las peticiones 200; fechas correctas tras D22 |
 | Paridad de rutas | `test/e2e/route-parity.e2e-spec.ts` lee `../conf/routes` | todas las rutas legacy existen con su verbo; rutas ERP y alias verificados |
-| `docker build` | `Dockerfile` | **No verificado** (el daemon de Docker no estaba en ejecución) |
+| Docker local | `docker compose -f docker-compose.local.yml up -d --build` / `watch` | API y web sanas contra el Supabase real; ciclo de reconstrucción ≈ 25 s |
+| Revisión visual | Edge headless contra un build de producción con una API **simulada** (no toca datos reales): escritorio oscuro/claro, móvil 390 px y los modales | sin desborde horizontal ni errores de consola; gráficos de flujo de caja correctos |
 
-Lo que NO se pudo verificar: ejecución contra el **Supabase real** (sin credenciales de prueba; las pruebas usan PostgreSQL 17 embebido con
-el mismo DDL/triggers/SPs del documento), la imagen Docker, y el **Google Apps Script** (no está en el repositorio; el contrato de §6
+Lo que NO se pudo verificar: el **inicio de sesión real en el navegador** (la revisión visual usa una API simulada; las lecturas contra el
+Supabase real se comprobaron por HTTP con un JWT propio), y el **Google Apps Script** (no está en el repositorio; el contrato de §6
 se probó con lotes sintéticos).
 
 ---

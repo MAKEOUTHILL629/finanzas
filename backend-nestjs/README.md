@@ -56,6 +56,10 @@ cd backend-nestjs && npm run start:dev        cd ../finanzas-mf && npm install &
 
 `finanzas-mf/proxy.conf.json` reenvía `/api/*` a `http://localhost:9000/api`; Angular usa `apiUrl = '/api'` (mismo origen, sin CORS).
 Con `npm run build:docker` el frontend llama directo a `http://localhost:9000/api` (CORS ya permite `localhost:4200/3000`).
+Pantallas de Angular que consumen esta API (rutas en `finanzas-mf/src/app/app-routing.module.ts`): `/prestamos` (+ detalle con
+aprobaciones, edición, pago y anulación), `/cortes-cobro`, `/obligaciones` (+ detalle y aportes), `/extractos` (pagar extracto),
+`/tarjetas` (editar con `PUT /api/tarjetas/:id`), `/cuentas`, `/categorias`, `/transacciones`, `/correos` (bandeja y conciliación),
+`/flujo-caja`, `/estado-cuenta` y `/cruces-deuda`. Detalle en el README de `finanzas-mf`.
 Las fechas "de calendario" se serializan como epoch-ms a las 00:00 **UTC**; el frontend las formatea en UTC
 (`shared/date-only.helper.ts` y `formatoFecha`) para no mostrar el día anterior en Colombia (UTC-5).
 
