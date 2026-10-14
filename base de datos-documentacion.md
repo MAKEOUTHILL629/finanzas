@@ -1120,3 +1120,396 @@ CROSS JOIN tarjetas_mes t
 CROSS JOIN recurrentes_mes r
 CROSS JOIN reembolsos_terceros_mes reem;
 ```
+---
+
+## 8. Triggers Adicionales para Cierre Automático del Sub-Ledger (`MovimientosDeudaPersona`)
+
+En la Sección 4 quedaron cubiertos los triggers para `Prestamos`, `AportesDetalle` y `CrucesDeuda`. Estos **3 triggers adicionales** completan la automatización para que **Tarjetas de Crédito**, **Gastos Recurrentes Compartidos (Mercado/Servicios)** y **Reembolsos Bancarios** alimenten `MovimientosDeudaPersona` sin intervención manual del backend:
+
+```sql
+BEGIN;
+
+-- ============================================================================
+-- TRIGGER 6: Al asignar un Responsable en una Compra de Tarjeta de Crédito
+--            o al insertar sus CuotasDetalle, generar los cargos por cuota en el Sub-Ledger
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION fn_imputar_cuotas_tc_responsable()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_owner_id int8;
+  v_mi_persona_id int8;
+  v_concepto_compra varchar;
+  v_num_cuotas int2;
+BEGIN
+  SELECT owner_user_id, concepto, numero_cuotas
+    INTO v_owner_id, v_concepto_compra, v_num_cuotas
+  FROM "ComprasCredito"
+  WHERE id = NEW.compra_credito;
+
+  SELECT id INTO v_mi_persona_id
+  FROM "Personas"
+  WHERE linked_user_id = v_owner_id OR legacy_appsheet_id = 'lm1R40P16oHgkM3Szu91du'
+  ORDER BY id LIMIT 1;
+
+  -- Solo generar deuda en el Sub-Ledger si el responsable es un TERCERO (no tú mismo)
+  IF NEW.persona IS NOT NULL AND (v_mi_persona_id IS NULL OR NEW.persona <> v_mi_persona_id) THEN
+    INSERT INTO "MovimientosDeudaPersona" (
+      owner_user_id, persona_id, fecha_movimiento, periodo_imputacion,
+      tipo_movimiento, signo, monto, cuota_detalle_id, responsable_compra_id,
+      appsheet_row_id, concepto, estado
+    )
+    SELECT 
+      v_owner_id,
+      NEW.persona,
+      cd.fecha_pago,
+      COALESCE(cd.periodo_facturacion, to_char(cd.fecha_pago, 'YYYY-MM')),
+      'CARGO_CUOTA_TC',
+      1,
+      ROUND((cd.pago_total * (NEW.porcentaje_pago / 100.0))::numeric, 2),
+      cd.id,
+      NEW.id,
+      'TC_CUOTA_' || cd.id || '_RESP_' || NEW.id,
+      'Cuota ' || cd.numero_cuota || '/' || COALESCE(v_num_cuotas, 1) || ' - ' || COALESCE(v_concepto_compra, 'Compra TC'),
+      CASE 
+        WHEN cd.numero_cuota = 1 OR COALESCE(cd.periodo_facturacion, to_char(cd.fecha_pago, 'YYYY-MM')) <= to_char(CURRENT_DATE, 'YYYY-MM')
+        THEN 'CONFIRMADO'
+        ELSE 'PROYECTADO'
+      END
+    FROM "CuotasDetalle" cd
+    WHERE cd.compra = NEW.compra_credito
+      AND (NEW.cantidad_cuotas IS NULL OR cd.numero_cuota <= NEW.cantidad_cuotas)
+    ON CONFLICT (appsheet_row_id) DO UPDATE
+      SET monto = EXCLUDED.monto,
+          estado = EXCLUDED.estado;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_after_insert_responsable_tc ON "ResponsablesComprasCredito";
+CREATE TRIGGER trg_after_insert_responsable_tc
+AFTER INSERT OR UPDATE ON "ResponsablesComprasCredito"
+FOR EACH ROW EXECUTE FUNCTION fn_imputar_cuotas_tc_responsable();
+
+
+-- ============================================================================
+-- TRIGGER 7: Al confirmar o pagar un PeriodoRecurrente (Ej: Mercado de la Casa, Internet, Energía)
+--            cargar automáticamente a cada participante su parte en MovimientosDeudaPersona
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION fn_imputar_gasto_recurrente_compartido()
+RETURNS TRIGGER AS $$
+DECLARE
+  v_nombre_plantilla varchar;
+  v_mi_persona_id int8;
+  v_base_calculo numeric(15,2);
+BEGIN
+  -- Se activa cuando el periodo pasa a 'FACTURADO' o 'PAGADO'
+  IF NEW.estado IN ('FACTURADO', 'PAGADO') THEN
+    SELECT nombre INTO v_nombre_plantilla
+    FROM "PlantillasRecurrentes"
+    WHERE id = NEW.plantilla_recurrente_id;
+
+    SELECT id INTO v_mi_persona_id
+    FROM "Personas"
+    WHERE linked_user_id = NEW.owner_user_id OR legacy_appsheet_id = 'lm1R40P16oHgkM3Szu91du'
+    ORDER BY id LIMIT 1;
+
+    v_base_calculo := COALESCE(NEW.monto_real_pagado, NEW.monto_pronosticado);
+
+    INSERT INTO "MovimientosDeudaPersona" (
+      owner_user_id, persona_id, fecha_movimiento, periodo_imputacion,
+      tipo_movimiento, signo, monto, periodo_recurrente_id,
+      appsheet_row_id, concepto, estado
+    )
+    SELECT 
+      NEW.owner_user_id,
+      rr.persona_id,
+      COALESCE(NEW.fecha_estimada_pago, CURRENT_DATE),
+      NEW.periodo,
+      'CARGO_GASTO_COMPARTIDO',
+      1,
+      COALESCE(
+        rr.monto_fijo_participacion,
+        ROUND((v_base_calculo * (rr.porcentaje_participacion / 100.0))::numeric, 2)
+      ),
+      NEW.id,
+      'REC_PER_' || NEW.id || '_PERS_' || rr.persona_id,
+      'Gasto compartido: ' || v_nombre_plantilla || ' (' || NEW.periodo || ')',
+      'CONFIRMADO'
+    FROM "ResponsablesRecurrentes" rr
+    WHERE rr.plantilla_recurrente_id = NEW.plantilla_recurrente_id
+      AND rr.persona_id IS NOT NULL
+      AND (v_mi_persona_id IS NULL OR rr.persona_id <> v_mi_persona_id)
+    ON CONFLICT (appsheet_row_id) DO UPDATE
+      SET monto = EXCLUDED.monto,
+          estado = 'CONFIRMADO';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_after_update_periodo_recurrente ON "PeriodosRecurrentes";
+CREATE TRIGGER trg_after_update_periodo_recurrente
+AFTER INSERT OR UPDATE ON "PeriodosRecurrentes"
+FOR EACH ROW EXECUTE FUNCTION fn_imputar_gasto_recurrente_compartido();
+
+
+-- ============================================================================
+-- TRIGGER 8: Sincronizar actualizaciones de CuotasDetalle (Cambio de TRM o Estado)
+--            con los asientos ya creados en MovimientosDeudaPersona
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION fn_sync_update_cuota_detalle_subledger()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Si cambió el pago_total (ej. por ajuste de TRM en compras USD) o el estado de la cuota
+  IF NEW.pago_total IS DISTINCT FROM OLD.pago_total OR NEW.estado IS DISTINCT FROM OLD.estado THEN
+    UPDATE "MovimientosDeudaPersona" m
+    SET 
+      monto = ROUND((NEW.pago_total * (rcc.porcentaje_pago / 100.0))::numeric, 2),
+      estado = CASE 
+        WHEN UPPER(COALESCE(NEW.estado, '')) IN ('FACTURADA', 'PAGADA') THEN 'CONFIRMADO'
+        ELSE m.estado
+      END
+    FROM "ResponsablesComprasCredito" rcc
+    WHERE m.cuota_detalle_id = NEW.id
+      AND m.responsable_compra_id = rcc.id;
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_sync_update_cuota_subledger ON "CuotasDetalle";
+CREATE TRIGGER trg_sync_update_cuota_subledger
+AFTER UPDATE ON "CuotasDetalle"
+FOR EACH ROW EXECUTE FUNCTION fn_sync_update_cuota_detalle_subledger();
+
+COMMIT;
+```
+
+---
+
+## 9. Catálogo Estandarizado de Enums y Dominios deValores para el Backend
+
+Para mantener consistencia entre tus modelos en **Java (Spring Boot)** y las validaciones de base de datos, implementa estos `enum` exactos en el backend:
+
+| Tabla.Columna | Nombre sugerido del `Enum` en Backend | Valores Permitidos Exactos |
+|---|---|---|
+| `CuentasFinancieras.tipo_cuenta` | `TipoCuentaFinanciera` | `'AHORROS'`, `'CORRIENTE'`, `'BILLETERA_DIGITAL'`, `'EFECTIVO'` |
+| `Categorias.tipo` | `TipoCategoria` | `'INGRESO'`, `'EGRESO'`, `'AMBOS'` |
+| `Transacciones.tipo_transaccion` | `TipoTransaccion` | `'INGRESO'`, `'EGRESO'`, `'TRANSFERENCIA'`, `'PAGO_TARJETA'`, `'PAGO_PRESTAMO'`, `'REEMBOLSO_TERCERO'` |
+| `Transacciones.origen_registro` | `OrigenRegistro` | `'MANUAL'`, `'EMAIL_AUTO'`, `'MIGRACION'` |
+| `Transacciones.estado` | `EstadoTransaccion` | `'PENDIENTE_REVISION'`, `'CONFIRMADO'`, `'ANULADO'` |
+| `NotificacionesCorreo.estado_procesamiento` | `EstadoNotificacionCorreo` | `'PENDIENTE'`, `'CONCILIADO'`, `'IGNORADO'`, `'ERROR'` |
+| `PlantillasRecurrentes.frecuencia` | `FrecuenciaRecurrente` | `'SEMANAL'`, `'QUINCENAL'`, `'MENSUAL'`, `'ANUAL'` |
+| `PeriodosRecurrentes.estado` | `EstadoPeriodoRecurrente` | `'PROYECTADO'`, `'FACTURADO'`, `'PAGADO'`, `'OMITIDO'` |
+| `Prestamos.direccion_prestamo` | `DireccionPrestamo` | `'POR_COBRAR'`, `'POR_PAGAR'` |
+| `Prestamos.estado` | `EstadoPrestamo` | `'Pendiente'`, `'Pagado'`, `'Anulado'` |
+| `Prestamos.metodo` | `MetodoPrestamo` | `'Nequi'`, `'Fisico'`, `'Pago Fernando'`, `'Prestamo Fernando'`, `'Domicilio'`, `'Otros'` |
+| `AprobacionesPrestamos.estado` | `EstadoAprobacion` | `'Pendiente'`, `'Aprobado'`, `'Rechazado'` |
+| `CortesCobro.estado` | `EstadoCorte` | `'PASADO'`, `'ACTIVO'`, `'FUTURO'` |
+| `ObligacionesMes.tipo_obligacion` | `TipoObligacionMes` | `'CUOTA_CARRO'`, `'CUOTA_CASA'`, `'OTRO'` |
+| `ObligacionesMes.estado` | `EstadoObligacionMes` | `'ABIERTO'`, `'COMPLETADO'` |
+| `AportesDetalle.metodo` | `MetodoAporte` | `'Fisico'`, `'Bancolombia'`, `'Nequi'`, `'Carrera'`, `'Uso Carro'`, `'Prestamo'`, `'Pago Mensual'`, `'Otro'` |
+| `MovimientosDeudaPersona.tipo_movimiento` | `TipoMovimientoDeuda` | `'CARGO_CUOTA_TC'`, `'CARGO_GASTO_COMPARTIDO'`, `'CARGO_PRESTAMO_DIRECTO'`, `'CARGO_CRUCE_DEUDA'`, `'ABONO_PAGO_RECIBIDO'`, `'ABONO_APORTE_DIARIO'`, `'ABONO_CRUCE_DEUDA'` |
+| `MovimientosDeudaPersona.estado` | `EstadoMovimientoDeuda` | `'PROYECTADO'`, `'CONFIRMADO'`, `'ANULADO'` |
+
+---
+
+## 10. Operación de Compras en Dólares (`USD`) y Confirmación de TRM al Corte
+
+Cuando realizas una compra en dólares con tarjeta de crédito (ej. `USD $100.00` a 3 cuotas):
+
+1. **En el momento de la compra (`POST /compras-credito`):**
+   * Guardas `moneda_original = 'USD'`, `valor_moneda_original = 100.00`, `tasa_cambio_aplicada = 4200.00` (TRM provisional del día) y `trm_confirmada = false`.
+   * El sistema calcula las cuotas provisionales en COP (`valor_compra = 420000.00`).
+2. **En la fecha de corte o pago de la tarjeta (`PATCH /compras-credito/{id}/confirmar-trm`):**
+   * Cuando el banco liquida los dólares a la TRM real de facturación (`:nuevaTrm`, ej. `4150.00`), tu backend ejecuta esta función transaccional que recalcula las cuotas pendientes y actualiza automáticamente lo que te deben los responsables en `MovimientosDeudaPersona` (gracias al Trigger 8):
+
+```sql
+CREATE OR REPLACE FUNCTION sp_actualizar_trm_compra_usd(
+  p_compra_id int8,
+  p_nueva_trm numeric(12,4),
+  p_confirmar_definitivo bool DEFAULT true
+) RETURNS void AS $$
+DECLARE
+  v_factor numeric(18,8);
+BEGIN
+  -- Calcular factor de ajuste entre la TRM nueva y la TRM anterior
+  SELECT (p_nueva_trm / NULLIF(tasa_cambio_aplicada, 0))
+    INTO v_factor
+  FROM "ComprasCredito"
+  WHERE id = p_compra_id AND moneda_original <> 'COP';
+
+  IF v_factor IS NOT NULL AND v_factor > 0 THEN
+    -- 1. Actualizar cabecera en ComprasCredito
+    UPDATE "ComprasCredito"
+    SET 
+      tasa_cambio_aplicada = p_nueva_trm,
+      valor_compra = ROUND((valor_moneda_original * p_nueva_trm)::numeric, 2),
+      pago_mensual = ROUND((pago_mensual * v_factor)::numeric, 2),
+      trm_confirmada = p_confirmar_definitivo
+    WHERE id = p_compra_id;
+
+    -- 2. Recalcular únicamente las cuotas que aún NO están pagadas
+    --    (El Trigger 8 actualizará automáticamente MovimientosDeudaPersona)
+    UPDATE "CuotasDetalle"
+    SET 
+      aporte_capital = ROUND((aporte_capital * v_factor)::numeric, 2),
+      interes_pagado = ROUND((interes_pagado * v_factor)::numeric, 2),
+      pago_total = ROUND((pago_total * v_factor)::numeric, 2),
+      saldo_restante = ROUND((saldo_restante * v_factor)::numeric, 2)
+    WHERE compra = p_compra_id
+      AND UPPER(COALESCE(estado, '')) <> 'PAGADA';
+  END IF;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+---
+
+## 11. Operación de Transferencias, Pago de Extracto de Tarjeta y Reembolso de Terceros
+
+### 11.1 Transferencia entre tus propias cuentas (Ej. de Bancolombia a Nequi)
+* Se inserta **una sola fila** en `Transacciones`:
+   * `tipo_transaccion = 'TRANSFERENCIA'`
+   * `cuenta_origen_id = :idBancolombia`
+   * `cuenta_destino_id = :idNequi`
+   * `monto_cop = :valor`
+   * `estado = 'CONFIRMADO'`
+* El Trigger 2 (`fn_actualizar_saldo_cuenta`) resta automáticamente el monto de Bancolombia y lo suma en Nequi en la misma transacción atómica.
+
+### 11.2 Pago Mensual del Extracto de una Tarjeta de Crédito (`POST /tarjetas/{id}/pagar-extracto`)
+Cuando pagas la cuota mensual de tu tarjeta desde una cuenta bancaria para un `:periodo` (ej. `'2026-10'`):
+
+```sql
+CREATE OR REPLACE FUNCTION sp_pagar_extracto_tarjeta(
+  p_owner_user_id int8,
+  p_tarjeta_id int8,
+  p_cuenta_origen_id int8,
+  p_periodo char(7),
+  p_monto_pagado numeric(15,2)
+) RETURNS int8 AS $$
+DECLARE
+  v_transaccion_id int8;
+  v_nombre_tarjeta varchar;
+BEGIN
+  SELECT COALESCE(franquicia || ' - ' || descripcion, 'Tarjeta ID ' || id)
+    INTO v_nombre_tarjeta
+  FROM "Tarjetas" WHERE id = p_tarjeta_id;
+
+  -- 1. Registrar salida del dinero de la cuenta bancaria
+  INSERT INTO "Transacciones" (
+    owner_user_id, tipo_transaccion, cuenta_origen_id, tarjeta_pagada_id,
+    fecha_transaccion, concepto, moneda_original, monto_original, tasa_cambio, monto_cop,
+    origen_registro, estado
+  ) VALUES (
+    p_owner_user_id, 'PAGO_TARJETA', p_cuenta_origen_id, p_tarjeta_id,
+    now(), 'Pago extracto ' || v_nombre_tarjeta || ' (' || p_periodo || ')',
+    'COP', p_monto_pagado, 1.0000, p_monto_pagado, 'MANUAL', 'CONFIRMADO'
+  ) RETURNING id INTO v_transaccion_id;
+
+  -- 2. Marcar como PAGADA todas las cuotas de esa tarjeta en ese periodo
+  UPDATE "CuotasDetalle" cd
+  SET estado = 'PAGADA'
+  FROM "ComprasCredito" cc
+  WHERE cd.compra = cc.id
+    AND cc.tarjeta = p_tarjeta_id
+    AND cd.periodo_facturacion = p_periodo;
+
+  RETURN v_transaccion_id;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+### 11.3 Registro de Pago / Reembolso Recibido de una Persona (`POST /personas/{id}/abonar`)
+Cuando Andrés, Alicia o Jeimmy te transfieren o pagan en efectivo lo que te deben del mes:
+
+```sql
+CREATE OR REPLACE FUNCTION sp_registrar_abono_persona(
+  p_owner_user_id int8,
+  p_persona_id int8,
+  p_cuenta_destino_id int8,
+  p_monto numeric(15,2),
+  p_periodo_imputacion char(7),
+  p_concepto varchar,
+  p_liquidar_prestamos_corte_id int8 DEFAULT NULL
+) RETURNS int8 AS $$
+DECLARE
+  v_transaccion_id int8;
+  v_movimiento_id int8;
+BEGIN
+  -- 1. Ingresar el dinero en tu cuenta bancaria o efectivo (Transacciones)
+  INSERT INTO "Transacciones" (
+    owner_user_id, tipo_transaccion, cuenta_destino_id, fecha_transaccion,
+    concepto, moneda_original, monto_original, tasa_cambio, monto_cop,
+    origen_registro, estado
+  ) VALUES (
+    p_owner_user_id, 'REEMBOLSO_TERCERO', p_cuenta_destino_id, now(),
+    p_concepto, 'COP', p_monto, 1.0000, p_monto, 'MANUAL', 'CONFIRMADO'
+  ) RETURNING id INTO v_transaccion_id;
+
+  -- 2. Registrar el abono (-1) en el Sub-Ledger de la persona
+  INSERT INTO "MovimientosDeudaPersona" (
+    owner_user_id, persona_id, fecha_movimiento, periodo_imputacion,
+    tipo_movimiento, signo, monto, transaccion_id, concepto, estado
+  ) VALUES (
+    p_owner_user_id, p_persona_id, CURRENT_DATE, p_periodo_imputacion,
+    'ABONO_PAGO_RECIBIDO', -1, p_monto, v_transaccion_id, p_concepto, 'CONFIRMADO'
+  ) RETURNING id INTO v_movimiento_id;
+
+  -- 3. Opcional: Si indicas un corte_id, marcar como 'Pagado' los préstamos pendientes de ese corte
+  --    (Desactivando temporalmente el trigger de abono individual para no abonar doble)
+  IF p_liquidar_prestamos_corte_id IS NOT NULL THEN
+    UPDATE "Prestamos"
+    SET estado = 'Pagado', saldo_pendiente = 0
+    WHERE owner_user_id = p_owner_user_id
+      AND responsable = p_persona_id
+      AND corte_id = p_liquidar_prestamos_corte_id
+      AND estado = 'Pendiente';
+  END IF;
+
+  RETURN v_movimiento_id;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+---
+
+## 12. Seguridad Multi-Tenant y Row Level Security (RLS) en Supabase
+
+Si tu backend se conecta usando la `service_role` key o conexión JDBC/R2DBC directa (`postgres`), el filtrado debe hacerse siempre por `WHERE owner_user_id = :userId`. Si además expones tablas directamente al cliente mediante el SDK de Supabase, habilita estas políticas RLS:
+
+```sql
+-- Habilitar RLS en todas las tablas sensibles
+ALTER TABLE "Personas" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Tarjetas" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "ComprasCredito" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "CuotasDetalle" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "ResponsablesComprasCredito" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "CuentasFinancieras" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Categorias" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Transacciones" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "NotificacionesCorreo" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "PlantillasRecurrentes" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "ResponsablesRecurrentes" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "PeriodosRecurrentes" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "CortesCobro" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "Prestamos" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "AprobacionesPrestamos" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "ObligacionesMes" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "AportesDia" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "AportesDetalle" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "CrucesDeuda" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "MovimientosDeudaPersona" ENABLE ROW LEVEL SECURITY;
+
+-- Nota para el Backend:
+-- Si el backend usa conexión directa de base de datos (Spring Boot JDBC / R2DBC con usuario postgres),
+-- el rol postgres ignora RLS por defecto (BYPASSRLS) y la seguridad recae en enviar siempre :userId
+-- extraído del JWT en los repositorios.
+```
