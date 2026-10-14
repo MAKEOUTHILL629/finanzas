@@ -17,6 +17,7 @@ export const V2_ALIASES: Array<[RegExp, string]> = [
   [/^\/api\/v2\/periodos-recurrentes\/(\d+)\/registrar-pago(?=[/?]|$)/, '/api/recurrentes/periodos/$1/pagar'],
   [/^\/api\/v2\/periodos-recurrentes(?=[/?]|$)/, '/api/recurrentes/periodos'],
   [/^\/api\/v2\//, '/api/'],
+  [/^\/api\/v1\//, '/api/'],
 ];
 
 export function reescribirAliasV2(url: string): string {
@@ -64,6 +65,11 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
 /** Swagger UI en `/api/docs` y JSON en `/api/docs-json` (la ruta legacy `/api-docs` se mantiene aparte). */
 export function setupSwagger(app: INestApplication): OpenAPIObject {
   const document = buildOpenApiDocument(app);
-  SwaggerModule.setup('api/docs', app, document, { jsonDocumentUrl: 'api/docs-json' });
+  const cdn = 'https://cdn.jsdelivr.net/npm/swagger-ui-dist@5';
+  SwaggerModule.setup('api/docs', app, document, {
+    jsonDocumentUrl: 'api/docs-json',
+    customCssUrl: `${cdn}/swagger-ui.css`,
+    customJs: [`${cdn}/swagger-ui-bundle.js`, `${cdn}/swagger-ui-standalone-preset.js`],
+  });
   return document;
 }
