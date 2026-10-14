@@ -2399,7 +2399,7 @@
             "bearer": []
           }
         ],
-        "summary": "Resumen de obligaciones (vista vw_ResumenObligacionesMes)",
+        "summary": "Resumen de obligaciones del mes (meta, aportado, restante y estado calculado)",
         "tags": [
           "Obligaciones y aportes"
         ]
@@ -2484,7 +2484,7 @@
             "bearer": []
           }
         ],
-        "summary": "Días de aporte (vw_AportesDiaResumen) con el desglose de AportesDetalle y Personas",
+        "summary": "Días de aporte con su total y el desglose de AportesDetalle y Personas",
         "tags": [
           "Obligaciones y aportes"
         ]

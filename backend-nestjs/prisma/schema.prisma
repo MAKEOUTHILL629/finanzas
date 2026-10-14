@@ -1,6 +1,6 @@
 // =============================================================================
-// Esquema Prisma — Supabase / PostgreSQL (21 tablas + 2 vistas)
-// Fuente: "base de datos-documentacion.md" secciones 3 y 4.2.
+// Esquema Prisma — Supabase / PostgreSQL (21 tablas)
+// Fuente: "base de datos-documentacion.md" sección 3.
 //
 //  * Los modelos conservan EXACTAMENTE el nombre de tabla y de columna de la BD
 //    (equivale a lo que produciría `prisma db pull`), por eso no hay @@map.
@@ -10,8 +10,7 @@
 // =============================================================================
 
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["views"]
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -505,36 +504,7 @@ model MovimientosDeudaPersona {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Vistas calculadas (sección 4.2 del documento de BD) — solo lectura
+// Vistas (sección 4.2 del documento de BD): NO se modelan.
+// `vw_ResumenObligacionesMes` y `vw_AportesDiaResumen` no existen (o tienen otra forma) en el Supabase real, y
+// leerlas rompía /api/obligaciones-mes. Sus resúmenes se calculan en ObligacionesAportesService sobre las tablas base.
 // ─────────────────────────────────────────────────────────────────────────────
-
-view vw_ResumenObligacionesMes {
-  obligacion_mes_id            BigInt    @unique
-  owner_user_id                BigInt?
-  tipo_obligacion              String?   @db.VarChar
-  responsable_principal_id     BigInt?
-  responsable_principal_nombre String?   @db.VarChar
-  concepto                     String?   @db.VarChar
-  periodo                      String?   @db.Char(7)
-  meta_mensual                 Decimal?  @db.Decimal
-  fecha_inicio                 DateTime? @db.Date
-  fecha_final                  DateTime? @db.Date
-  estado_calculado             String?
-  dias_aportados               BigInt?
-  cantidad_registros           BigInt?
-  aporte_total_real            Decimal?  @db.Decimal(15, 2)
-  restante_real                Decimal?  @db.Decimal(15, 2)
-  aportado_directo_responsable Decimal?  @db.Decimal(15, 2)
-  aportado_por_cruces          Decimal?  @db.Decimal(15, 2)
-}
-
-view vw_AportesDiaResumen {
-  aporte_dia_id     BigInt    @unique
-  obligacion_mes_id BigInt?
-  mes_concepto      String?   @db.VarChar
-  periodo           String?   @db.Char(7)
-  fecha             DateTime? @db.Date
-  notas             String?
-  items_count       BigInt?
-  valor_total_dia   Decimal?  @db.Decimal(15, 2)
-}

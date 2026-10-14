@@ -40,8 +40,6 @@ export const MODELOS = [
   'aportesDetalle',
   'crucesDeuda',
   'movimientosDeudaPersona',
-  'vw_ResumenObligacionesMes',
-  'vw_AportesDiaResumen',
 ] as const;
 
 /**

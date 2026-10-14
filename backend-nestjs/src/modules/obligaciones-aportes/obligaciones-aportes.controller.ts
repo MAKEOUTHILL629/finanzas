@@ -13,7 +13,7 @@ export class ObligacionesAportesController {
   @Get()
   @ApiQuery({ name: 'periodo', required: false, example: '2026-09' })
   @ApiQuery({ name: 'tipo', required: false, enum: ['CUOTA_CARRO', 'CUOTA_CASA', 'OTRO'] })
-  @ApiOperation({ summary: 'Resumen de obligaciones (vista vw_ResumenObligacionesMes)' })
+  @ApiOperation({ summary: 'Resumen de obligaciones del mes (meta, aportado, restante y estado calculado)' })
   list(
     @CurrentUser('userId') userId: bigint,
     @Query('periodo') periodo?: string,
@@ -35,7 +35,7 @@ export class ObligacionesAportesController {
   }
 
   @Get(':id/dias')
-  @ApiOperation({ summary: 'Días de aporte (vw_AportesDiaResumen) con el desglose de AportesDetalle y Personas' })
+  @ApiOperation({ summary: 'Días de aporte con su total y el desglose de AportesDetalle y Personas' })
   dias(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
     return this.obligaciones.aportesDia(id, userId);
   }

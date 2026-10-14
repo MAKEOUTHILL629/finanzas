@@ -342,7 +342,14 @@ describe('ObligacionesAportesService', () => {
     prisma.aportesDia.findFirst.mockResolvedValue(null);
     prisma.aportesDia.create.mockResolvedValue({ id: 200n, notas: null });
     prisma.aportesDetalle.create.mockResolvedValue({});
-    prisma.vw_AportesDiaResumen.findFirst.mockResolvedValue({ aporte_dia_id: 200n, valor_total_dia: dec('80000') });
+    prisma.aportesDia.findUniqueOrThrow.mockResolvedValue({
+      id: 200n,
+      obligacion_mes_id: 20n,
+      fecha: new Date('2026-09-14T00:00:00.000Z'),
+      notas: 'Día normal',
+      obligacion_mes: { concepto: 'Cuota carro', periodo: '2026-09' },
+    });
+    prisma.aportesDetalle.findMany.mockResolvedValue([{ id: 1n, valor: dec('50000') }, { id: 2n, valor: dec('30000') }]);
 
     await service.registrarAportesDia(
       20,
@@ -375,6 +382,13 @@ describe('ObligacionesAportesService', () => {
   it('reutiliza el AportesDia existente de (obligación, fecha)', async () => {
     const { prisma, service } = setup();
     prisma.aportesDia.findFirst.mockResolvedValue({ id: 200n, notas: null });
+    prisma.aportesDia.findUniqueOrThrow.mockResolvedValue({
+      id: 200n,
+      obligacion_mes_id: 20n,
+      fecha: new Date('2026-09-14T00:00:00.000Z'),
+      notas: null,
+      obligacion_mes: { concepto: 'Cuota carro', periodo: '2026-09' },
+    });
     prisma.aportesDetalle.create.mockResolvedValue({});
     await service.registrarAportesDia(20, { fecha: '2026-09-14', items: [{ personaId: 1, valor: 10, metodo: 'Nequi' as any }] }, OWNER);
     expect(prisma.aportesDia.create).not.toHaveBeenCalled();
@@ -395,24 +409,90 @@ describe('ObligacionesAportesService', () => {
     await expect(service.registrarAportesDia(20, { ...body, fecha: 'hoy' }, OWNER)).rejects.toMatchObject({ status: 400 });
   });
 
-  it('resumen lee de la vista vw_ResumenObligacionesMes filtrando por owner', async () => {
+  const filaObligacion = (extra: any = {}) => ({
+    id: 20n,
+    owner_user_id: OWNER,
+    tipo_obligacion: 'CUOTA_CARRO',
+    responsable_principal_id: 5n,
+    concepto: 'Cuota carro',
+    periodo: '2026-09',
+    meta_mensual: dec('1810000'),
+    fecha_inicio: new Date('2026-09-01T00:00:00.000Z'),
+    fecha_final: null,
+    estado: 'ABIERTO',
+    responsable_principal: { nombre: 'Papá' },
+    dias: [
+      { id: 1n, detalles: [{ persona_id: 5n, valor: dec('100000') }, { persona_id: 6n, valor: dec('50000.5') }] },
+      { id: 2n, detalles: [] },
+    ],
+    ...extra,
+  });
+
+  it('resumen se calcula desde las tablas base (no desde vistas) filtrando por owner', async () => {
     const { prisma, service } = setup();
-    prisma.vw_ResumenObligacionesMes.findFirst.mockResolvedValue({ obligacion_mes_id: 20n });
-    await service.resumen(20, OWNER);
-    expect(prisma.vw_ResumenObligacionesMes.findFirst.mock.calls[0][0].where).toEqual({ obligacion_mes_id: 20n, owner_user_id: OWNER });
-    prisma.vw_ResumenObligacionesMes.findFirst.mockResolvedValue(null);
+    prisma.obligacionesMes.findMany.mockResolvedValue([filaObligacion()]);
+    const r: any = await service.resumen(20, OWNER);
+
+    expect(prisma.obligacionesMes.findMany.mock.calls[0][0].where).toEqual({ id: 20n, owner_user_id: OWNER });
+    expect(r).toMatchObject({
+      obligacion_mes_id: 20n,
+      owner_user_id: OWNER,
+      responsable_principal_nombre: 'Papá',
+      estado_calculado: 'ABIERTO',
+      dias_aportados: 2,
+      cantidad_registros: 2,
+    });
+    expect(r.meta_mensual.toString()).toBe('1810000');
+    expect(r.aporte_total_real.toString()).toBe('150000.5');
+    expect(r.restante_real.toString()).toBe('1659999.5');
+    expect(r.aportado_directo_responsable.toString()).toBe('100000');
+    expect(r.aportado_por_cruces.toString()).toBe('50000.5');
+
+    prisma.obligacionesMes.findMany.mockResolvedValue([]);
     await expect(service.resumen(21, OWNER)).rejects.toMatchObject({ status: 404 });
   });
 
-  it('aportesDia combina la vista de resumen con el desglose de AportesDetalle', async () => {
+  it('estado_calculado = COMPLETADO al alcanzar la meta y restante_real nunca arrastra -0', async () => {
     const { prisma, service } = setup();
-    prisma.vw_AportesDiaResumen.findMany.mockResolvedValue([{ aporte_dia_id: 200n, fecha: new Date() }, { aporte_dia_id: 201n }]);
-    prisma.aportesDetalle.findMany.mockResolvedValue([
-      { id: 1n, aporte_dia_id: 200n },
-      { id: 2n, aporte_dia_id: 200n },
-      { id: 3n, aporte_dia_id: 201n },
+    prisma.obligacionesMes.findMany.mockResolvedValue([
+      filaObligacion({ meta_mensual: dec('150000.5') }),
+      filaObligacion({ id: 21n, dias: [], meta_mensual: dec('0') }),
+    ]);
+    const [completa, vacia]: any[] = await service.listResumen(OWNER, '2026-09', 'CUOTA_CARRO');
+
+    expect(prisma.obligacionesMes.findMany.mock.calls[0][0].where).toEqual({
+      owner_user_id: OWNER,
+      periodo: '2026-09',
+      tipo_obligacion: 'CUOTA_CARRO',
+    });
+    expect(completa.estado_calculado).toBe('COMPLETADO');
+    expect(completa.restante_real.toString()).toBe('0');
+    expect(vacia).toMatchObject({ estado_calculado: 'COMPLETADO', dias_aportados: 0, cantidad_registros: 0 });
+    expect(vacia.aporte_total_real.toString()).toBe('0');
+    expect(Object.is(vacia.restante_real.toNumber(), -0)).toBe(false);
+  });
+
+  it('aportesDia: total y cantidad por día + desglose de AportesDetalle, sin leer ninguna vista', async () => {
+    const { prisma, service } = setup();
+    prisma.obligacionesMes.findFirst.mockResolvedValue({ id: 20n, owner_user_id: OWNER, concepto: 'Cuota carro', periodo: '2026-09' });
+    prisma.aportesDia.findMany.mockResolvedValue([
+      {
+        id: 200n,
+        obligacion_mes_id: 20n,
+        fecha: new Date('2026-09-15T00:00:00.000Z'),
+        notas: null,
+        detalles: [{ id: 1n, aporte_dia_id: 200n, valor: dec('10.10') }, { id: 2n, aporte_dia_id: 200n, valor: dec('20.20') }],
+      },
+      { id: 201n, obligacion_mes_id: 20n, fecha: new Date('2026-09-14T00:00:00.000Z'), notas: 'x', detalles: [{ id: 3n, aporte_dia_id: 201n, valor: dec('5') }] },
     ]);
     const r: any = await service.aportesDia(20, OWNER);
+
+    expect(prisma.aportesDia.findMany.mock.calls[0][0].where).toEqual({ obligacion_mes_id: 20n });
+    expect(r.map((d: any) => [d.aporte_dia_id, d.items_count, d.valor_total_dia.toString()])).toEqual([
+      [200n, 2, '30.3'],
+      [201n, 1, '5'],
+    ]);
+    expect(r[0]).toMatchObject({ mes_concepto: 'Cuota carro', periodo: '2026-09', obligacion_mes_id: 20n });
     expect(r[0].detalles.map((d: any) => d.id)).toEqual([1n, 2n]);
     expect(r[1].detalles.map((d: any) => d.id)).toEqual([3n]);
   });
