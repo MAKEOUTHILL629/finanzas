@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  finanzas-app:
+    # Imagen desde Docker Hub (ajustar con tu username)
+    # Ejemplo: image: tuusername/finanzas-app:latest
+    image: ${DOCKER_USERNAME}/finanzas-app:latest
+    container_name: finanzas-app
+    restart: unless-stopped
+
+    # Mapeo de puertos
+    ports:
+      - "80:9000"    # HTTP público
+      - "9000:9000"  # Acceso directo a la API
+
+    # Variables de entorno
+    environment:
+      # Database
+      - DB_URL=${DB_URL}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+
+      # Security
+      - APP_SECRET=${APP_SECRET}
+      - JWT_EXPIRATION=${JWT_EXPIRATION:-3600}
+
+      # Java Options (optimizado para t2.micro - 1GB RAM)
+      - JAVA_OPTS=-Xmx700m -Xms256m -XX:+UseG1GC -XX:MaxGCPauseMillis=100 -XX:+UseStringDeduplication
+
+      # Play Framework
+      - PLAY_HTTP_CONTEXT=${PLAY_HTTP_CONTEXT:-/}
+
+    # Health check para Docker
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Límites de recursos (para t2.micro)
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 900M
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Labels para organización
+    labels:
+      - "com.finanzas.app=api"
+      - "com.finanzas.environment=production"
+
+# Networks (opcional, pero recomendado)
+networks:
+  default:
+    name: finanzas-network
+

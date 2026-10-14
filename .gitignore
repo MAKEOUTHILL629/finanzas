@@ -23,6 +23,8 @@ dist
 lib_managed/
 src_managed/
 project/boot/
+project/.boot/
+.boot/
 project/plugins/project/
 
 # ====================================
