@@ -115,6 +115,12 @@ describe('Paridad de rutas con conf/routes', () => {
       '/api/ledger/personas/1/extracto?periodo=2026-10',
       '/api/analytics/flujo-caja?periodo=2026-10',
       '/api/tarjetas/resumen-mensual?periodo=2026-10',
+      // aportes del carro, recurrentes por persona y liquidación mensual
+      '/api/obligaciones-aportes/carro/resumen',
+      '/api/recurrentes-persona',
+      '/api/recurrentes-persona/1',
+      '/api/liquidacion-mensual/2026-10',
+      '/api/liquidacion-mensual/2026-10/persona/1',
       // alias de la primera versión del plan
       '/api/v2/cuentas-financieras',
       '/api/v2/plantillas-recurrentes',
@@ -122,6 +128,9 @@ describe('Paridad de rutas con conf/routes', () => {
       '/api/v2/subledger/estado-cuenta?periodo=2026-10',
       '/api/v2/dashboard/flujo-caja?periodo=2026-10',
       '/api/v2/obligaciones-mes/1/aportes-dia',
+      '/api/v2/obligaciones-aportes/carro/resumen',
+      '/api/v2/recurrentes-persona',
+      '/api/v2/liquidacion-mensual/2026-10',
     ]) {
       const res = await http.get(ruta);
       expect([ruta, res.status]).toEqual([ruta, 401]);
@@ -139,6 +148,19 @@ describe('Paridad de rutas con conf/routes', () => {
       ['put', '/api/compras-credito/1'],
       ['put', '/api/tarjetas/1'],
       ['patch', '/api/tarjetas/1'],
+      ['post', '/api/obligaciones-aportes/periodos'],
+      ['post', '/api/obligaciones-aportes/periodos/1/aplicar-excedente'],
+      ['post', '/api/obligaciones-aportes/aportes-diarios'],
+      ['put', '/api/obligaciones-aportes/aportes-diarios/1'],
+      ['patch', '/api/obligaciones-aportes/aportes-diarios/1'],
+      ['delete', '/api/obligaciones-aportes/aportes-diarios/1'],
+      ['post', '/api/recurrentes-persona'],
+      ['patch', '/api/recurrentes-persona/1'],
+      ['delete', '/api/recurrentes-persona/1'],
+      ['post', '/api/recurrentes-persona/generar-mes/2026-10'],
+      ['post', '/api/liquidacion-mensual/cruce-entre-personas'],
+      ['post', '/api/liquidacion-mensual/registrar-pago'],
+      ['post', '/api/v2/obligaciones-aportes/aportes-diarios'],
     ] as const) {
       const res = await (http as any)[metodo](ruta).send({});
       expect([metodo, ruta, res.status === 404]).toEqual([metodo, ruta, false]);
@@ -176,6 +198,18 @@ describe('Paridad de rutas con conf/routes', () => {
       '/api/obligaciones-mes',
       '/api/obligaciones-mes/{id}/dias',
       '/api/obligaciones-mes/{id}/aportes-dia',
+      '/api/obligaciones-aportes/carro/resumen',
+      '/api/obligaciones-aportes/periodos',
+      '/api/obligaciones-aportes/periodos/{id}/aplicar-excedente',
+      '/api/obligaciones-aportes/aportes-diarios',
+      '/api/obligaciones-aportes/aportes-diarios/{id}',
+      '/api/recurrentes-persona',
+      '/api/recurrentes-persona/{id}',
+      '/api/recurrentes-persona/generar-mes/{periodo}',
+      '/api/liquidacion-mensual/{periodo}',
+      '/api/liquidacion-mensual/{periodo}/persona/{personaId}',
+      '/api/liquidacion-mensual/cruce-entre-personas',
+      '/api/liquidacion-mensual/registrar-pago',
       '/api/cruces-deuda',
       '/api/personas/{id}/abonar',
       '/api/ledger/estado-cuenta',

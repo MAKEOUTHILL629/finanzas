@@ -36,22 +36,23 @@ model Users {
   provider         String?
   provider_user_id String?
 
-  linked_accounts        linked_accounts[]
-  personas_owned         Personas[]                @relation("PersonasOwner")
-  personas_linked        Personas[]                @relation("PersonasLinkedUser")
-  tarjetas               Tarjetas[]
-  compras_credito        ComprasCredito[]
-  cuentas_financieras    CuentasFinancieras[]
-  categorias             Categorias[]
-  transacciones          Transacciones[]
-  notificaciones_correo  NotificacionesCorreo[]
-  plantillas_recurrentes PlantillasRecurrentes[]
-  periodos_recurrentes   PeriodosRecurrentes[]
-  cortes_cobro           CortesCobro[]
-  prestamos              Prestamos[]
-  obligaciones_mes       ObligacionesMes[]
-  cruces_deuda           CrucesDeuda[]
-  movimientos_deuda      MovimientosDeudaPersona[]
+  linked_accounts            linked_accounts[]
+  personas_owned             Personas[]                 @relation("PersonasOwner")
+  personas_linked            Personas[]                 @relation("PersonasLinkedUser")
+  tarjetas                   Tarjetas[]
+  compras_credito            ComprasCredito[]
+  cuentas_financieras        CuentasFinancieras[]
+  categorias                 Categorias[]
+  transacciones              Transacciones[]
+  notificaciones_correo      NotificacionesCorreo[]
+  plantillas_recurrentes     PlantillasRecurrentes[]
+  periodos_recurrentes       PeriodosRecurrentes[]
+  cortes_cobro               CortesCobro[]
+  prestamos                  Prestamos[]
+  obligaciones_mes           ObligacionesMes[]
+  cruces_deuda               CrucesDeuda[]
+  movimientos_deuda          MovimientosDeudaPersona[]
+  cargos_recurrentes_persona CargosRecurrentesPersona[]
 }
 
 model linked_accounts {
@@ -90,6 +91,7 @@ model Personas {
   cruces_asume             CrucesDeuda[]                @relation("CruceAsume")
   responsables_recurrentes ResponsablesRecurrentes[]
   movimientos              MovimientosDeudaPersona[]
+  cargos_recurrentes       CargosRecurrentesPersona[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -202,6 +204,7 @@ model CuentasFinancieras {
   transacciones_origen  Transacciones[]         @relation("TxCuentaOrigen")
   transacciones_destino Transacciones[]         @relation("TxCuentaDestino")
   plantillas_debito     PlantillasRecurrentes[]
+  aportes_detalle       AportesDetalle[]
 }
 
 model Categorias {
@@ -244,9 +247,10 @@ model Transacciones {
   tarjeta_pagada Tarjetas?           @relation(fields: [tarjeta_pagada_id], references: [id])
   categoria      Categorias?         @relation(fields: [categoria_id], references: [id])
 
-  notificaciones NotificacionesCorreo[]
-  periodos_pago  PeriodosRecurrentes[]
-  movimientos    MovimientosDeudaPersona[]
+  notificaciones  NotificacionesCorreo[]
+  periodos_pago   PeriodosRecurrentes[]
+  movimientos     MovimientosDeudaPersona[]
+  aportes_detalle AportesDetalle[]
 }
 
 model NotificacionesCorreo {
@@ -413,11 +417,15 @@ model ObligacionesMes {
   estado                   String?   @db.VarChar
   legacy_appsheet_id       String?   @unique @db.VarChar
   created_at               DateTime? @default(now()) @db.Timestamptz(6)
+  /// Parte del excedente del mes ya trasladada a otro mes o cruzada contra el estado de cuenta (sql/002).
+  saldo_a_favor_aplicado   Decimal   @default(0) @db.Decimal(15, 2)
 
   owner                 Users    @relation(fields: [owner_user_id], references: [id])
   responsable_principal Personas @relation(fields: [responsable_principal_id], references: [id])
 
-  dias AportesDia[]
+  dias                 AportesDia[]
+  aportes_origen_saldo AportesDetalle[]          @relation("AporteOrigenSaldoFavor")
+  movimientos_saldo    MovimientosDeudaPersona[]
 }
 
 model AportesDia {
@@ -443,10 +451,18 @@ model AportesDetalle {
   prestamo_cruce_generado_id BigInt?
   legacy_appsheet_id         String?   @unique @db.VarChar
   created_at                 DateTime? @default(now()) @db.Timestamptz(6)
+  /// Cuenta donde entró el dinero (EFECTIVO / TRANSFERENCIA) y la transacción que se generó (sql/002).
+  cuenta_financiera_id       BigInt?
+  transaccion_id             BigInt?
+  /// Periodo del que viene el saldo a favor cuando metodo = SALDO_A_FAVOR.
+  origen_obligacion_mes_id   BigInt?
 
-  aporte_dia     AportesDia @relation(fields: [aporte_dia_id], references: [id])
-  persona        Personas   @relation(fields: [persona_id], references: [id])
-  prestamo_cruce Prestamos? @relation("AporteCruceGenerado", fields: [prestamo_cruce_generado_id], references: [id])
+  aporte_dia     AportesDia          @relation(fields: [aporte_dia_id], references: [id])
+  persona        Personas            @relation(fields: [persona_id], references: [id])
+  prestamo_cruce Prestamos?          @relation("AporteCruceGenerado", fields: [prestamo_cruce_generado_id], references: [id])
+  cuenta         CuentasFinancieras? @relation(fields: [cuenta_financiera_id], references: [id])
+  transaccion    Transacciones?      @relation(fields: [transaccion_id], references: [id])
+  origen_saldo   ObligacionesMes?    @relation("AporteOrigenSaldoFavor", fields: [origen_obligacion_mes_id], references: [id])
 
   prestamos_origen Prestamos[] @relation("PrestamoOrigenAporte")
 }
@@ -474,24 +490,26 @@ model CrucesDeuda {
 }
 
 model MovimientosDeudaPersona {
-  id                    BigInt    @id @default(autoincrement())
-  owner_user_id         BigInt
-  persona_id            BigInt
-  fecha_movimiento      DateTime  @db.Date
-  periodo_imputacion    String    @db.Char(7)
-  tipo_movimiento       String    @db.VarChar
-  signo                 Int       @db.SmallInt
-  monto                 Decimal   @db.Decimal
-  cuota_detalle_id      BigInt?
-  responsable_compra_id BigInt?
-  prestamo_id           BigInt?
-  periodo_recurrente_id BigInt?
-  transaccion_id        BigInt?
-  cruce_deuda_id        BigInt?
-  appsheet_row_id       String?   @unique
-  concepto              String    @db.VarChar
-  estado                String?   @db.VarChar
-  created_at            DateTime? @default(now()) @db.Timestamptz(6)
+  id                          BigInt    @id @default(autoincrement())
+  owner_user_id               BigInt
+  persona_id                  BigInt
+  fecha_movimiento            DateTime  @db.Date
+  periodo_imputacion          String    @db.Char(7)
+  tipo_movimiento             String    @db.VarChar
+  signo                       Int       @db.SmallInt
+  monto                       Decimal   @db.Decimal
+  cuota_detalle_id            BigInt?
+  responsable_compra_id       BigInt?
+  prestamo_id                 BigInt?
+  periodo_recurrente_id       BigInt?
+  transaccion_id              BigInt?
+  cruce_deuda_id              BigInt?
+  cargo_recurrente_persona_id BigInt?
+  obligacion_mes_id           BigInt?
+  appsheet_row_id             String?   @unique
+  concepto                    String    @db.VarChar
+  estado                      String?   @db.VarChar
+  created_at                  DateTime? @default(now()) @db.Timestamptz(6)
 
   owner              Users                       @relation(fields: [owner_user_id], references: [id])
   persona            Personas                    @relation(fields: [persona_id], references: [id])
@@ -501,6 +519,35 @@ model MovimientosDeudaPersona {
   periodo_recurrente PeriodosRecurrentes?        @relation(fields: [periodo_recurrente_id], references: [id])
   transaccion        Transacciones?              @relation(fields: [transaccion_id], references: [id])
   cruce_deuda        CrucesDeuda?                @relation(fields: [cruce_deuda_id], references: [id])
+  cargo_recurrente   CargosRecurrentesPersona?   @relation(fields: [cargo_recurrente_persona_id], references: [id])
+  obligacion_mes     ObligacionesMes?            @relation(fields: [obligacion_mes_id], references: [id])
+}
+
+/// Cargos o abonos mensuales recurrentes a una persona, vitalicios o por X meses (sql/002).
+/// Los asientos del mes se generan de forma idempotente en `MovimientosDeudaPersona`.
+model CargosRecurrentesPersona {
+  id                 BigInt    @id @default(autoincrement())
+  owner_user_id      BigInt
+  persona_id         BigInt
+  concepto           String    @db.VarChar
+  valor_mensual      Decimal   @db.Decimal(15, 2)
+  naturaleza         String    @default("CARGO_A_COBRAR") @db.VarChar
+  modalidad_duracion String    @default("INDEFINIDO") @db.VarChar
+  numero_meses       Int?
+  mes_inicio         String    @db.Char(7)
+  mes_fin            String?   @db.Char(7)
+  cuotas_generadas   Int       @default(0)
+  dia_cobro          Int       @default(1) @db.SmallInt
+  activo             Boolean   @default(true)
+  estado             String    @default("ACTIVO") @db.VarChar
+  notas              String?
+  created_at         DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner   Users    @relation(fields: [owner_user_id], references: [id])
+  persona Personas @relation(fields: [persona_id], references: [id])
+
+  movimientos MovimientosDeudaPersona[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

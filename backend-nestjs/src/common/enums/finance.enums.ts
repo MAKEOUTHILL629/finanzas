@@ -99,6 +99,12 @@ export enum EstadoObligacionMes {
 }
 
 export enum MetodoAporte {
+  // Métodos canónicos de la especificación de aportes del carro
+  EFECTIVO = 'EFECTIVO',
+  TRANSFERENCIA = 'TRANSFERENCIA',
+  CRUCE_CUENTAS = 'CRUCE_CUENTAS',
+  SALDO_A_FAVOR = 'SALDO_A_FAVOR',
+  // Valores heredados de AppSheet (560 aportes migrados); se siguen aceptando y mostrando
   FISICO = 'Fisico',
   BANCOLOMBIA = 'Bancolombia',
   NEQUI = 'Nequi',
@@ -117,10 +123,43 @@ export enum TipoMovimientoDeuda {
   ABONO_PAGO_RECIBIDO = 'ABONO_PAGO_RECIBIDO',
   ABONO_APORTE_DIARIO = 'ABONO_APORTE_DIARIO',
   ABONO_CRUCE_DEUDA = 'ABONO_CRUCE_DEUDA',
+  /** Cargo mensual recurrente a una persona (`CargosRecurrentesPersona`, naturaleza CARGO_A_COBRAR). */
+  CARGO_RECURRENTE_PERSONA = 'CARGO_RECURRENTE_PERSONA',
+  /** Valor a favor / descuento mensual recurrente (naturaleza ABONO_A_FAVOR). */
+  ABONO_RECURRENTE_PERSONA = 'ABONO_RECURRENTE_PERSONA',
+  /** Saldo a favor de la cuota del carro aplicado al estado de cuenta de fin de mes. */
+  ABONO_SALDO_FAVOR_CARRO = 'ABONO_SALDO_FAVOR_CARRO',
 }
 
 export enum EstadoMovimientoDeuda {
   PROYECTADO = 'PROYECTADO',
   CONFIRMADO = 'CONFIRMADO',
   ANULADO = 'ANULADO',
+}
+
+export enum EstadoPeriodoAporte {
+  PENDIENTE = 'PENDIENTE',
+  PARCIAL = 'PARCIAL',
+  COMPLETADO = 'COMPLETADO',
+  CON_SALDO_A_FAVOR = 'CON_SALDO_A_FAVOR',
+}
+
+export enum DestinoExcedente {
+  SIGUIENTE_MES = 'SIGUIENTE_MES',
+  ESTADO_CUENTA = 'ESTADO_CUENTA',
+}
+
+export enum NaturalezaRecurrentePersona {
+  CARGO_A_COBRAR = 'CARGO_A_COBRAR',
+  ABONO_A_FAVOR = 'ABONO_A_FAVOR',
+}
+
+export enum ModalidadDuracion {
+  INDEFINIDO = 'INDEFINIDO',
+  PLAZO_FIJO = 'PLAZO_FIJO',
+}
+
+export enum EstadoCargoRecurrentePersona {
+  ACTIVO = 'ACTIVO',
+  FINALIZADO = 'FINALIZADO',
 }

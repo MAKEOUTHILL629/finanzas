@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ConfigService } from '@nestjs/config';
 import { execSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from 'pg';
 import { ComprasCreditoCsvService } from '../../src/modules/compras-credito/compras-credito-csv.service';
@@ -14,8 +14,11 @@ import { CuentasFinancierasService } from '../../src/modules/cuentas-financieras
 import { GastosRecurrentesService } from '../../src/modules/gastos-recurrentes/gastos-recurrentes.service';
 import { NotificacionesCorreoService } from '../../src/modules/notificaciones-correo/notificaciones-correo.service';
 import { SyncBatchService } from '../../src/modules/notificaciones-correo/sync-batch.service';
+import { LiquidacionMensualService } from '../../src/modules/liquidacion-mensual/liquidacion-mensual.service';
+import { AportesCarroService } from '../../src/modules/obligaciones-aportes/aportes-carro.service';
 import { ObligacionesAportesService } from '../../src/modules/obligaciones-aportes/obligaciones-aportes.service';
 import { CortesCobroService } from '../../src/modules/prestamos/cortes-cobro.service';
+import { RecurrentesPersonaService } from '../../src/modules/recurrentes-persona/recurrentes-persona.service';
 import { PrestamosService } from '../../src/modules/prestamos/prestamos.service';
 import { SubledgerDeudasService } from '../../src/modules/subledger-deudas/subledger-deudas.service';
 import { TarjetasService } from '../../src/modules/tarjetas/tarjetas.service';
@@ -29,12 +32,12 @@ import { PrismaService } from '../../src/prisma/prisma.service';
  *   TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/finanzas_test npm run test:integration
  *
  * Reconstruye el esquema desde `prisma/schema.prisma` (DDL) y aplica el SQL de triggers, vistas y SPs de
- * "base de datos-documentacion.md" (secciones 4, 8, 10 y 11). Es DESTRUCTIVO (DROP SCHEMA public CASCADE), por eso
+ * `sql/*.sql` (los objetos del documento de BD y los de aportes/cruces/recurrentes). Es DESTRUCTIVO (DROP SCHEMA public CASCADE), por eso
  * se niega a ejecutarse salvo contra localhost y una base cuyo nombre contenga "test".
  */
 
 const RAIZ = join(__dirname, '..', '..');
-const DOC_BD = join(RAIZ, '..', 'base de datos-documentacion.md');
+const DIR_SQL = join(RAIZ, 'sql');
 
 export const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL;
 export const describeDb = TEST_DATABASE_URL ? describe : describe.skip;
@@ -48,14 +51,23 @@ function assertEsBaseDePruebas(url: string): void {
   }
 }
 
-/** Bloques ```sql de la documentación que definen funciones, vistas o triggers. */
-function sqlDeLaDocumentacion(): string[] {
-  const md = readFileSync(DOC_BD, 'utf8');
-  const bloques = [...md.matchAll(/```sql\n([\s\S]*?)```/g)].map((m) => m[1]);
-  return bloques
-    .filter((b) => /CREATE OR REPLACE (FUNCTION|VIEW)/.test(b))
-    .map((b) => b.replace(/DO \$\$[\s\S]*?END \$\$;/g, '')); // el DO añade un UNIQUE que Prisma ya creó
+/** Scripts de `sql/` en orden: son EXACTAMENTE los que se aplican a Supabase (`node scripts/aplicar-sql.js`). */
+function scriptsSql(): string[] {
+  return readdirSync(DIR_SQL)
+    .filter((f) => /^\d{3}_.+\.sql$/.test(f))
+    .sort()
+    .map((f) => readFileSync(join(DIR_SQL, f), 'utf8'));
 }
+
+/**
+ * Objetos que define `sql/002` y que Prisma también conoce (están en schema.prisma). Se quitan antes de aplicar los
+ * scripts para probar el camino real: esquema "existente" + migración (con sus CHECK, índices y FK).
+ */
+const QUITAR_ANTES_DE_MIGRAR = `
+  ALTER TABLE "MovimientosDeudaPersona" DROP COLUMN IF EXISTS cargo_recurrente_persona_id, DROP COLUMN IF EXISTS obligacion_mes_id;
+  DROP TABLE IF EXISTS "CargosRecurrentesPersona" CASCADE;
+  ALTER TABLE "AportesDetalle" DROP COLUMN IF EXISTS cuenta_financiera_id, DROP COLUMN IF EXISTS transaccion_id, DROP COLUMN IF EXISTS origen_obligacion_mes_id;
+  ALTER TABLE "ObligacionesMes" DROP COLUMN IF EXISTS saldo_a_favor_aplicado;`;
 
 let esquemaListo = false;
 
@@ -85,7 +97,8 @@ export async function prepararEsquema(): Promise<void> {
         ADD CONSTRAINT chk_mov_signo CHECK (signo IN (1, -1));
       ALTER TABLE "Tarjetas"
         ADD CONSTRAINT chk_tarjeta_dia_corte CHECK (dia_corte BETWEEN 1 AND 31);`);
-    for (const bloque of sqlDeLaDocumentacion()) await client.query(bloque);
+    await client.query(QUITAR_ANTES_DE_MIGRAR);
+    for (const script of scriptsSql()) await client.query(script);
   } finally {
     await client.end();
   }
@@ -117,6 +130,9 @@ export interface Servicios {
   notificaciones: NotificacionesCorreoService;
   syncBatch: SyncBatchService;
   obligaciones: ObligacionesAportesService;
+  aportesCarro: AportesCarroService;
+  recurrentesPersona: RecurrentesPersonaService;
+  liquidacion: LiquidacionMensualService;
   cortes: CortesCobroService;
   prestamos: PrestamosService;
   subledger: SubledgerDeudasService;
@@ -133,6 +149,8 @@ export async function crearServicios(): Promise<Servicios> {
   const prestamos = new PrestamosService(prisma);
   const compras = new ComprasCreditoService(prisma);
   const responsables = new ResponsablesService(prisma);
+  const subledger = new SubledgerDeudasService(prisma);
+  const recurrentesPersona = new RecurrentesPersonaService(prisma);
   return {
     prisma,
     compras,
@@ -146,9 +164,12 @@ export async function crearServicios(): Promise<Servicios> {
     notificaciones: new NotificacionesCorreoService(prisma, transacciones, compras, responsables, prestamos, config),
     syncBatch: new SyncBatchService(prisma, compras, transacciones, config),
     obligaciones: new ObligacionesAportesService(prisma),
+    aportesCarro: new AportesCarroService(prisma, transacciones),
+    recurrentesPersona,
+    liquidacion: new LiquidacionMensualService(prisma, recurrentesPersona, subledger),
     cortes: new CortesCobroService(prisma, prestamos),
     prestamos,
-    subledger: new SubledgerDeudasService(prisma),
+    subledger,
     tarjetas: new TarjetasService(prisma, new WebScrapingService(), config),
     transacciones,
   };

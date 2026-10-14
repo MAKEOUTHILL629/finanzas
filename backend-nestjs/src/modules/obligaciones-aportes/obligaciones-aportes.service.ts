@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Decimal } from '../../config/decimal.config';
 import { parseIsoDate } from '../../common/utils/date.util';
@@ -135,6 +135,15 @@ export class ObligacionesAportesService {
     }
     return this.prisma.$transaction(async (tx) => {
       await assertPersona(tx, dto.responsablePrincipalId, ownerUserId);
+      const existente = await tx.obligacionesMes.findFirst({
+        where: { owner_user_id: ownerUserId, tipo_obligacion: dto.tipoObligacion, periodo: dto.periodo },
+        select: { id: true },
+      });
+      if (existente) {
+        throw new ConflictException(
+          `Ya existe el periodo ${dto.periodo} de ${dto.tipoObligacion} (id ${existente.id}). Para cambiar su cuota usa POST /api/obligaciones-aportes/periodos`,
+        );
+      }
       return tx.obligacionesMes.create({
         data: {
           owner_user_id: ownerUserId,

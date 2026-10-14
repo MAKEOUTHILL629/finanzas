@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { isValidPeriodo, parseIsoDate, todayLocal } from '../../common/utils/date.util';
 import { money, toDbMoney, toDecimal } from '../../common/utils/decimal.util';
@@ -107,28 +107,13 @@ export class SubledgerDeudasService {
     });
 
     const corteId = dto.liquidarPrestamosCorteId ? BigInt(dto.liquidarPrestamosCorteId) : null;
-    let rows: Array<{ movimiento_id: bigint }>;
-    try {
-      rows = await this.prisma.$queryRaw<Array<{ movimiento_id: bigint }>>`
-        SELECT sp_registrar_abono_persona(
-          ${ownerUserId}::int8, ${BigInt(personaId)}::int8, ${BigInt(dto.cuentaDestinoId)}::int8,
-          ${toDbMoney(monto)}::numeric(15,2), ${dto.periodoImputacion}::char(7), ${dto.concepto}::varchar, ${corteId}::int8
-        ) AS movimiento_id`;
-    } catch (error) {
-      if (corteId === null) throw error;
-      // El SP liquida los préstamos con `saldo_pendiente = 0` en el mismo UPDATE que `estado = 'Pagado'`; el Trigger 4
-      // intenta entonces un abono de monto 0, que viola el CHECK (monto > 0) del sub-ledger. La transacción se revierte.
-      throw new HttpException(
-        {
-          message:
-            'No se pudo liquidar los préstamos del corte con sp_registrar_abono_persona: el trigger de préstamos ' +
-            'intenta registrar un abono de monto 0 (viola monto > 0). Registra el abono sin `liquidarPrestamosCorteId` ' +
-            'o corrige fn_sync_prestamo_to_subledger para omitir abonos de monto 0. No se registró nada.',
-          detalle: error instanceof Error ? error.message : String(error),
-        },
-        HttpStatus.UNPROCESSABLE_ENTITY,
-      );
-    }
+    // Con `liquidarPrestamosCorteId`, el SP marca Pagados los préstamos del corte con `app.omitir_abono_prestamo`
+    // activo: el Trigger 4 no vuelve a abonar (antes fallaba con `monto > 0`, D17; corregido en sql/001).
+    const rows = await this.prisma.$queryRaw<Array<{ movimiento_id: bigint }>>`
+      SELECT sp_registrar_abono_persona(
+        ${ownerUserId}::int8, ${BigInt(personaId)}::int8, ${BigInt(dto.cuentaDestinoId)}::int8,
+        ${toDbMoney(monto)}::numeric(15,2), ${dto.periodoImputacion}::char(7), ${dto.concepto}::varchar, ${corteId}::int8
+      ) AS movimiento_id`;
     return {
       movimientoId: Number(rows[0]?.movimiento_id),
       personaId,
@@ -147,14 +132,14 @@ export class SubledgerDeudasService {
         p.iniciales_nombre,
         p.color_representativo,
         SUM(CASE WHEN m.tipo_movimiento = 'CARGO_CUOTA_TC' AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS cuotas_tc_mes,
-        SUM(CASE WHEN m.tipo_movimiento = 'CARGO_GASTO_COMPARTIDO' AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS recurrentes_compartidos_mes,
+        SUM(CASE WHEN m.tipo_movimiento IN ('CARGO_GASTO_COMPARTIDO', 'CARGO_RECURRENTE_PERSONA') AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS recurrentes_compartidos_mes,
         SUM(CASE WHEN m.tipo_movimiento = 'CARGO_PRESTAMO_DIRECTO' AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS prestamos_mes,
         SUM(CASE WHEN m.tipo_movimiento = 'CARGO_CRUCE_DEUDA' AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS cruces_asumidos_mes,
         SUM(CASE WHEN m.signo = -1 AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS abonos_recibidos_mes,
         SUM(CASE WHEN m.periodo_imputacion = ${periodo}::char(7) THEN (m.monto * m.signo) ELSE 0 END) AS saldo_neto_mes,
         SUM(CASE WHEN m.periodo_imputacion <= ${periodo}::char(7) AND m.estado = 'CONFIRMADO' THEN (m.monto * m.signo) ELSE 0 END) AS saldo_total_acumulado
       FROM "Personas" p
-      LEFT JOIN "MovimientosDeudaPersona" m ON m.persona_id = p.id
+      LEFT JOIN "MovimientosDeudaPersona" m ON m.persona_id = p.id AND COALESCE(m.estado, 'CONFIRMADO') <> 'ANULADO'
       WHERE p.owner_user_id = ${ownerUserId}::int8
       GROUP BY p.id, p.nombre, p.iniciales_nombre, p.color_representativo
       ORDER BY saldo_total_acumulado DESC`;
@@ -236,6 +221,7 @@ export class SubledgerDeudasService {
         WHERE owner_user_id = ${ownerUserId}::int8
           AND periodo_imputacion = ${periodo}::char(7)
           AND signo = 1
+          AND COALESCE(estado, 'CONFIRMADO') <> 'ANULADO'
       )
       SELECT
         i.total_ingresos::numeric(15,2) AS total_ingresos,

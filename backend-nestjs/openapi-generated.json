@@ -2529,6 +2529,557 @@
         ]
       }
     },
+    "/api/obligaciones-aportes/carro/resumen": {
+      "get": {
+        "operationId": "AportesCarroController_resumen",
+        "parameters": [
+          {
+            "name": "tipo",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": [
+                "CUOTA_CARRO",
+                "CUOTA_CASA",
+                "OTRO"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "periodo",
+            "required": false,
+            "in": "query",
+            "description": "Periodo para los KPIs; por defecto el mes actual (o el más reciente)",
+            "schema": {
+              "example": "2026-10",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Resumen del carro: saldo a favor global, KPIs y periodos (más reciente primero) con sus aportes diarios y desglose",
+        "tags": [
+          "Aportes del carro"
+        ]
+      }
+    },
+    "/api/obligaciones-aportes/periodos": {
+      "post": {
+        "operationId": "AportesCarroController_guardarPeriodo",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuardarPeriodoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Crea o configura la cuota objetivo de un mes (si el mes ya existe, actualiza su cuota)",
+        "tags": [
+          "Aportes del carro"
+        ]
+      }
+    },
+    "/api/obligaciones-aportes/periodos/{id}/aplicar-excedente": {
+      "post": {
+        "operationId": "AportesCarroController_aplicarExcedente",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AplicarExcedenteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Aplica el saldo a favor del periodo: lo traslada al mes siguiente o lo cruza contra el estado de cuenta del responsable",
+        "tags": [
+          "Aportes del carro"
+        ]
+      }
+    },
+    "/api/obligaciones-aportes/aportes-diarios": {
+      "post": {
+        "operationId": "AportesCarroController_crear",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CrearAporteDiarioDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Registra un aporte diario con N líneas (efectivo, transferencia, cruce de cuentas, saldo a favor). Un cruce a nombre de un tercero se le carga a su cuenta por cobrar",
+        "tags": [
+          "Aportes del carro"
+        ]
+      }
+    },
+    "/api/obligaciones-aportes/aportes-diarios/{id}": {
+      "put": {
+        "operationId": "AportesCarroController_actualizar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActualizarAporteDiarioDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reemplaza un aporte diario, revirtiendo y recreando atómicamente cruces, transacciones y saldo a favor",
+        "tags": [
+          "Aportes del carro"
+        ]
+      },
+      "delete": {
+        "operationId": "AportesCarroController_eliminar",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Elimina un aporte diario: anula el cruce y la transacción, devuelve el saldo a favor y borra el día",
+        "tags": [
+          "Aportes del carro"
+        ]
+      }
+    },
+    "/api/recurrentes-persona": {
+      "get": {
+        "operationId": "RecurrentesPersonaController_list",
+        "parameters": [
+          {
+            "name": "personaId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "activo",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "modalidadDuracion",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "INDEFINIDO",
+                "PLAZO_FIJO"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Lista los recurrentes por persona, con su progreso (cuota k de X) o el distintivo de vitalicio",
+        "tags": [
+          "Recurrentes por persona"
+        ]
+      },
+      "post": {
+        "operationId": "RecurrentesPersonaController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CrearRecurrentePersonaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Crea un cargo (o valor a favor) mensual para una persona: de por vida (INDEFINIDO) o por X meses (PLAZO_FIJO)",
+        "tags": [
+          "Recurrentes por persona"
+        ]
+      }
+    },
+    "/api/recurrentes-persona/generar-mes/{periodo}": {
+      "post": {
+        "operationId": "RecurrentesPersonaController_generarMes",
+        "parameters": [
+          {
+            "name": "periodo",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Genera (idempotente) los cargos recurrentes del mes YYYY-MM en el estado de cuenta de cada persona",
+        "tags": [
+          "Recurrentes por persona"
+        ]
+      }
+    },
+    "/api/recurrentes-persona/{id}": {
+      "get": {
+        "operationId": "RecurrentesPersonaController_get",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "Recurrentes por persona"
+        ]
+      },
+      "patch": {
+        "operationId": "RecurrentesPersonaController_update",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActualizarRecurrentePersonaDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Edita el monto, la duración o el estado (pausar/activar) de un recurrente",
+        "tags": [
+          "Recurrentes por persona"
+        ]
+      },
+      "delete": {
+        "operationId": "RecurrentesPersonaController_remove",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Elimina el recurrente y anula sus asientos del estado de cuenta",
+        "tags": [
+          "Recurrentes por persona"
+        ]
+      }
+    },
+    "/api/liquidacion-mensual/cruce-entre-personas": {
+      "post": {
+        "operationId": "LiquidacionMensualController_cruce",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CruceEntrePersonasDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Cruce directo entre dos personas: abona a una y carga a la otra (un solo INSERT, Trigger 5)",
+        "tags": [
+          "Liquidación mensual"
+        ]
+      }
+    },
+    "/api/liquidacion-mensual/registrar-pago": {
+      "post": {
+        "operationId": "LiquidacionMensualController_pago",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistrarPagoMesDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Registra el pago (parcial o total) de lo que una persona debe; con cuenta destino también mueve su saldo",
+        "tags": [
+          "Liquidación mensual"
+        ]
+      }
+    },
+    "/api/liquidacion-mensual/{periodo}": {
+      "get": {
+        "operationId": "LiquidacionMensualController_mes",
+        "parameters": [
+          {
+            "name": "periodo",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "personaId",
+            "required": false,
+            "in": "query",
+            "description": "Solo esta persona",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "todas",
+            "required": false,
+            "in": "query",
+            "description": "true = incluye también a las personas sin movimientos ni saldo en el mes",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Liquidación del mes YYYY-MM por persona: cuotas de tarjeta, préstamos, recurrentes, cruces, cuota del carro, abonos y saldo neto. Genera antes los recurrentes del mes",
+        "tags": [
+          "Liquidación mensual"
+        ]
+      }
+    },
+    "/api/liquidacion-mensual/{periodo}/persona/{personaId}": {
+      "get": {
+        "operationId": "LiquidacionMensualController_persona",
+        "parameters": [
+          {
+            "name": "periodo",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "personaId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Liquidación del mes de una sola persona",
+        "tags": [
+          "Liquidación mensual"
+        ]
+      }
+    },
     "/api/cruces-deuda": {
       "get": {
         "operationId": "SubledgerDeudasController_listCruces",
@@ -4050,6 +4601,10 @@
           "metodo": {
             "type": "string",
             "enum": [
+              "EFECTIVO",
+              "TRANSFERENCIA",
+              "CRUCE_CUENTAS",
+              "SALDO_A_FAVOR",
               "Fisico",
               "Bancolombia",
               "Nequi",
@@ -4091,6 +4646,391 @@
         "required": [
           "fecha",
           "items"
+        ]
+      },
+      "GuardarPeriodoDto": {
+        "type": "object",
+        "properties": {
+          "periodo": {
+            "type": "string",
+            "example": "2026-09"
+          },
+          "valorCuota": {
+            "type": "object",
+            "example": "1400000.00",
+            "description": "Valor de la cuota objetivo del mes"
+          },
+          "tipoObligacion": {
+            "type": "string",
+            "enum": [
+              "CUOTA_CARRO",
+              "CUOTA_CASA",
+              "OTRO"
+            ],
+            "default": "CUOTA_CARRO"
+          },
+          "responsablePrincipalId": {
+            "type": "number",
+            "description": "Responsable de la cuota; por defecto el del último periodo del mismo tipo"
+          },
+          "concepto": {
+            "type": "string",
+            "example": "Septiembre 2026",
+            "description": "Etiqueta legible; por defecto «Mes año»"
+          }
+        },
+        "required": [
+          "periodo",
+          "valorCuota"
+        ]
+      },
+      "AplicarExcedenteDto": {
+        "type": "object",
+        "properties": {
+          "destino": {
+            "type": "string",
+            "enum": [
+              "SIGUIENTE_MES",
+              "ESTADO_CUENTA"
+            ],
+            "description": "SIGUIENTE_MES: aporte SALDO_A_FAVOR en el mes siguiente. ESTADO_CUENTA: abono en el estado de cuenta de fin de mes del responsable"
+          },
+          "valor": {
+            "type": "object",
+            "example": "50000.00",
+            "description": "Por defecto, todo el saldo a favor disponible"
+          },
+          "periodoImputacion": {
+            "type": "string",
+            "example": "2026-10",
+            "description": "Solo ESTADO_CUENTA: mes del estado de cuenta; por defecto el mes actual"
+          }
+        },
+        "required": [
+          "destino"
+        ]
+      },
+      "DetalleAporteDiarioDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number",
+            "description": "Solo en PUT: id del detalle existente (si no cambia, se conserva su cruce y su transacción)"
+          },
+          "valor": {
+            "type": "object",
+            "example": "358000.00"
+          },
+          "metodo": {
+            "type": "string",
+            "enum": [
+              "EFECTIVO",
+              "TRANSFERENCIA",
+              "CRUCE_CUENTAS",
+              "SALDO_A_FAVOR",
+              "Fisico",
+              "Bancolombia",
+              "Nequi",
+              "Carrera",
+              "Uso Carro",
+              "Prestamo",
+              "Pago Mensual",
+              "Otro"
+            ],
+            "example": "EFECTIVO"
+          },
+          "personaId": {
+            "type": "number",
+            "description": "EFECTIVO/TRANSFERENCIA/SALDO_A_FAVOR: el responsable (papá) o tú. CRUCE_CUENTAS: la persona que asume la deuda (ej. Andrés): el valor suma a la cuota y se le carga a ella"
+          },
+          "cuentaFinancieraId": {
+            "type": "number",
+            "description": "Solo EFECTIVO/TRANSFERENCIA: cuenta donde entra el dinero (si falta, la cuenta EFECTIVO por defecto)"
+          },
+          "comentarios": {
+            "type": "string",
+            "example": "Andrés le debía a mi papá lo de un arreglo"
+          },
+          "origenObligacionMesId": {
+            "type": "number",
+            "description": "Solo SALDO_A_FAVOR: periodo (ObligacionesMes) del que sale el excedente; por defecto el mes anterior"
+          }
+        },
+        "required": [
+          "valor",
+          "metodo",
+          "personaId"
+        ]
+      },
+      "CrearAporteDiarioDto": {
+        "type": "object",
+        "properties": {
+          "fecha": {
+            "type": "string",
+            "example": "2026-10-14"
+          },
+          "periodo": {
+            "type": "string",
+            "example": "2026-09",
+            "description": "Mes de la cuota al que abona (puede ser distinto al de la fecha). Por defecto, el mes de la fecha"
+          },
+          "obligacionMesId": {
+            "type": "number",
+            "description": "Alternativa a `periodo`: id del periodo (ObligacionesMes) destino"
+          },
+          "tipoObligacion": {
+            "type": "string",
+            "enum": [
+              "CUOTA_CARRO",
+              "CUOTA_CASA",
+              "OTRO"
+            ],
+            "default": "CUOTA_CARRO"
+          },
+          "notas": {
+            "type": "string"
+          },
+          "detalles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetalleAporteDiarioDto"
+            }
+          }
+        },
+        "required": [
+          "fecha",
+          "detalles"
+        ]
+      },
+      "ActualizarAporteDiarioDto": {
+        "type": "object",
+        "properties": {
+          "fecha": {
+            "type": "string",
+            "example": "2026-10-14"
+          },
+          "periodo": {
+            "type": "string",
+            "example": "2026-09",
+            "description": "Mes de la cuota al que abona (puede ser distinto al de la fecha). Por defecto, el mes de la fecha"
+          },
+          "obligacionMesId": {
+            "type": "number",
+            "description": "Alternativa a `periodo`: id del periodo (ObligacionesMes) destino"
+          },
+          "tipoObligacion": {
+            "type": "string",
+            "enum": [
+              "CUOTA_CARRO",
+              "CUOTA_CASA",
+              "OTRO"
+            ],
+            "default": "CUOTA_CARRO"
+          },
+          "notas": {
+            "type": "string"
+          },
+          "detalles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DetalleAporteDiarioDto"
+            }
+          }
+        },
+        "required": [
+          "fecha",
+          "detalles"
+        ]
+      },
+      "CrearRecurrentePersonaDto": {
+        "type": "object",
+        "properties": {
+          "personaId": {
+            "type": "number",
+            "description": "Persona a la que se le carga (o se le reconoce) el valor cada mes"
+          },
+          "concepto": {
+            "type": "string",
+            "example": "Plan de celular"
+          },
+          "valorMensual": {
+            "type": "object",
+            "example": "65000.00"
+          },
+          "naturaleza": {
+            "type": "string",
+            "enum": [
+              "CARGO_A_COBRAR",
+              "ABONO_A_FAVOR"
+            ],
+            "default": "CARGO_A_COBRAR"
+          },
+          "modalidadDuracion": {
+            "type": "string",
+            "enum": [
+              "INDEFINIDO",
+              "PLAZO_FIJO"
+            ],
+            "default": "INDEFINIDO",
+            "description": "INDEFINIDO = de por vida; PLAZO_FIJO = por `numeroMeses` meses"
+          },
+          "numeroMeses": {
+            "type": "number",
+            "example": 6,
+            "description": "Obligatorio con PLAZO_FIJO (1–600); no se admite con INDEFINIDO"
+          },
+          "mesInicio": {
+            "type": "string",
+            "example": "2026-10",
+            "description": "Primer mes en que se cobra; por defecto el mes actual"
+          },
+          "diaCobro": {
+            "type": "number",
+            "example": 1,
+            "default": 1,
+            "description": "Día del mes de la fecha del movimiento (se ajusta al último día de meses cortos)"
+          },
+          "activo": {
+            "type": "boolean",
+            "default": true
+          },
+          "notas": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "personaId",
+          "concepto",
+          "valorMensual"
+        ]
+      },
+      "ActualizarRecurrentePersonaDto": {
+        "type": "object",
+        "properties": {
+          "concepto": {
+            "type": "string",
+            "example": "Plan de celular"
+          },
+          "valorMensual": {
+            "type": "object",
+            "example": "65000.00"
+          },
+          "naturaleza": {
+            "type": "string",
+            "enum": [
+              "CARGO_A_COBRAR",
+              "ABONO_A_FAVOR"
+            ],
+            "default": "CARGO_A_COBRAR"
+          },
+          "modalidadDuracion": {
+            "type": "string",
+            "enum": [
+              "INDEFINIDO",
+              "PLAZO_FIJO"
+            ],
+            "default": "INDEFINIDO",
+            "description": "INDEFINIDO = de por vida; PLAZO_FIJO = por `numeroMeses` meses"
+          },
+          "numeroMeses": {
+            "type": "number",
+            "example": 6,
+            "description": "Obligatorio con PLAZO_FIJO (1–600); no se admite con INDEFINIDO"
+          },
+          "mesInicio": {
+            "type": "string",
+            "example": "2026-10",
+            "description": "Primer mes en que se cobra; por defecto el mes actual"
+          },
+          "diaCobro": {
+            "type": "number",
+            "example": 1,
+            "default": 1,
+            "description": "Día del mes de la fecha del movimiento (se ajusta al último día de meses cortos)"
+          },
+          "activo": {
+            "type": "boolean",
+            "default": true
+          },
+          "notas": {
+            "type": "string"
+          }
+        }
+      },
+      "CruceEntrePersonasDto": {
+        "type": "object",
+        "properties": {
+          "personaOrigenId": {
+            "type": "number",
+            "description": "Persona a quien se le DISMINUYE lo que debe (recibe el abono)"
+          },
+          "personaDestinoId": {
+            "type": "number",
+            "description": "Persona que ASUME la deuda frente a ti (recibe el cargo)"
+          },
+          "monto": {
+            "type": "object",
+            "example": "100000.00"
+          },
+          "periodo": {
+            "type": "string",
+            "example": "2026-10",
+            "description": "Mes del cruce; por defecto el de la fecha (o el actual)"
+          },
+          "fecha": {
+            "type": "string",
+            "example": "2026-10-14"
+          },
+          "concepto": {
+            "type": "string",
+            "example": "Andrés le debía a mi papá lo de un arreglo"
+          },
+          "comentarios": {
+            "type": "string"
+          },
+          "prestamoDestinoId": {
+            "type": "number",
+            "description": "Préstamo al que se aplica el abono"
+          }
+        },
+        "required": [
+          "personaOrigenId",
+          "personaDestinoId",
+          "monto",
+          "concepto"
+        ]
+      },
+      "RegistrarPagoMesDto": {
+        "type": "object",
+        "properties": {
+          "personaId": {
+            "type": "number"
+          },
+          "monto": {
+            "type": "object",
+            "example": "250000.00",
+            "description": "Pago parcial o total de lo que la persona debe"
+          },
+          "periodo": {
+            "type": "string",
+            "example": "2026-10",
+            "description": "Mes del estado de cuenta al que se imputa; por defecto el actual"
+          },
+          "cuentaDestinoId": {
+            "type": "number",
+            "description": "Cuenta donde entra el dinero (genera una transacción y mueve su saldo). Si falta, solo se anota el abono"
+          },
+          "concepto": {
+            "type": "string"
+          },
+          "liquidarPrestamosCorteId": {
+            "type": "number",
+            "description": "Requiere cuentaDestinoId: marca Pagados los préstamos pendientes de ese corte"
+          }
+        },
+        "required": [
+          "personaId",
+          "monto"
         ]
       },
       "CreateCruceDeudaDto": {

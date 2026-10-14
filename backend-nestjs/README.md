@@ -63,6 +63,25 @@ aprobaciones, edición, pago y anulación), `/cortes-cobro`, `/obligaciones` (+ 
 Las fechas "de calendario" se serializan como epoch-ms a las 00:00 **UTC**; el frontend las formatea en UTC
 (`shared/date-only.helper.ts` y `formatoFecha`) para no mostrar el día anterior en Colombia (UTC-5).
 
+## Base de datos: objetos y scripts (`sql/`)
+
+La BD real se gestiona con SQL idempotente de `sql/` (ver `sql/README.md`): triggers, SPs, vistas y las tablas/columnas de aportes del carro y
+recurrentes por persona. `node scripts/aplicar-sql.js --dry-run` muestra qué cambiaría sin guardar nada. Reversa: `sql/rollback_001_002.sql`.
+
+## Aportes del carro, cruces, recurrentes por persona y liquidación
+
+| Ruta (también bajo `/api/v2/…`) | Qué hace |
+|---|---|
+| `GET /api/obligaciones-aportes/carro/resumen` | KPIs, saldo a favor global y periodos (más reciente primero) con aportes diarios y desglose |
+| `POST /api/obligaciones-aportes/periodos` | Crea o configura la cuota de un mes |
+| `POST/PUT/DELETE /api/obligaciones-aportes/aportes-diarios[/:id]` | Aporte con N líneas (`EFECTIVO`, `TRANSFERENCIA`, `CRUCE_CUENTAS`, `SALDO_A_FAVOR`); un cruce a nombre de un tercero se le carga a su cuenta por cobrar; editar/borrar lo revierte |
+| `POST /api/obligaciones-aportes/periodos/:id/aplicar-excedente` | Saldo a favor → mes siguiente o abono en el estado de cuenta del responsable |
+| `GET/POST/PATCH/DELETE /api/recurrentes-persona` · `POST /generar-mes/:periodo` | Cargos/abonos mensuales por persona, de por vida o por X meses (idempotente) |
+| `GET /api/liquidacion-mensual/:periodo[/persona/:id]` | Cuánto debe cada persona a fin de mes (tarjetas, préstamos, recurrentes, cruces, cuota del carro, abonos) |
+| `POST /api/liquidacion-mensual/cruce-entre-personas` · `/registrar-pago` | Cruce directo y pago de fin de mes |
+
+Decisiones y mapa respecto a la especificación: D35–D38 en `MIGRATION_INVENTORY.md`.
+
 ## Reglas de diseño (inquebrantables)
 
 1. **Dinero con `Decimal`**, nunca `number` (`decimal.js`, precisión 20, `ROUND_HALF_UP`; montos a 2 y tasas/TRM a 4 decimales). `number` solo aparece en la frontera JSON.

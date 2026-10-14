@@ -64,25 +64,29 @@ describeDb('Integración BD — stored procedures y consultas', () => {
       expect(await saldo(semilla.nequiId)).toBe('350000.5');
     });
 
-    it('liquidar préstamos de un corte: probar el comportamiento real del SP junto al Trigger 4', async () => {
+    it('liquidar préstamos de un corte: UN solo abono (el del pago) y el préstamo queda Pagado con saldo 0', async () => {
       await s.prestamos.create({ valorPrestado: 80000, concepto: 'P1', fechaCobro: `${mes}-28`, responsable: semilla.andresId, estado: 'Pendiente', comentarios: '' } as any, semilla.userId);
 
-      const llamada = s.subledger.abonarPersona(
+      const r = await s.subledger.abonarPersona(
         semilla.andresId,
         { cuentaDestinoId: semilla.nequiId, monto: 80000, periodoImputacion: mes, concepto: 'Pago del corte', liquidarPrestamosCorteId: semilla.corteId },
         semilla.userId,
       );
 
-      // El SP deja `saldo_pendiente = 0` en el MISMO UPDATE que pone estado = 'Pagado', así que el Trigger 4
-      // intenta insertar un abono de monto 0 (COALESCE(saldo_pendiente, valor_prestado) = 0). Con la restricción
-      // `monto > 0` documentada en 3.22 la transacción completa falla; la API lo traduce a un 422 explicativo.
-      await expect(llamada).rejects.toMatchObject({
-        status: 422,
-        response: { message: expect.stringContaining('liquidarPrestamosCorteId'), detalle: expect.stringMatching(/chk_mov_monto_positivo|check constraint/i) },
-      });
-      // …y por ser transaccional no queda nada a medias:
-      expect(await s.prisma.transacciones.count()).toBe(0);
-      expect(await saldo(semilla.nequiId)).toBe('0');
+      // `sp_registrar_abono_persona` activa `app.omitir_abono_prestamo`: el Trigger 4 no abona otra vez cada préstamo
+      // (antes fallaba con `monto > 0`, D17) y el pago de la persona queda anotado una sola vez.
+      expect(r.movimientoId).toBeGreaterThan(0);
+      const prestamo = await s.prisma.prestamos.findFirstOrThrow();
+      expect(prestamo.estado).toBe('Pagado');
+      expect(prestamo.saldo_pendiente?.toString()).toBe('0');
+
+      const movs = await s.prisma.movimientosDeudaPersona.findMany({ where: { persona_id: BigInt(semilla.andresId) }, orderBy: { id: 'asc' } });
+      expect(movs.map((m) => [m.tipo_movimiento, m.signo, m.monto.toString()])).toEqual([
+        ['CARGO_PRESTAMO_DIRECTO', 1, '80000'],
+        ['ABONO_PAGO_RECIBIDO', -1, '80000'],
+      ]);
+      expect(await s.prisma.transacciones.count()).toBe(1);
+      expect(await saldo(semilla.nequiId)).toBe('80000');
     });
   });
 
