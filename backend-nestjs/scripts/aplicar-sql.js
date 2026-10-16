@@ -74,7 +74,8 @@ const CONSULTAS_OBJETOS = {
   triggers: `SELECT c.relname || '.' || t.tgname AS n FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
              JOIN pg_namespace ns ON ns.oid = c.relnamespace WHERE NOT t.tgisinternal AND ns.nspname = 'public' ORDER BY 1`,
   columnas: `SELECT table_name || '.' || column_name AS n FROM information_schema.columns
-             WHERE table_schema = 'public' AND table_name IN ('ObligacionesMes','AportesDetalle','MovimientosDeudaPersona','CargosRecurrentesPersona') ORDER BY 1`,
+             WHERE table_schema = 'public' AND table_name IN ('ObligacionesMes','AportesDetalle','MovimientosDeudaPersona','CargosRecurrentesPersona',
+               'Tarjetas','CuentasFinancieras','NotificacionesCorreo','CobrosPuntuales','CobrosPuntualesPersonas','EnlacesCobroPersona','ReportesPagoPersona') ORDER BY 1`,
   indices: `SELECT indexname AS n FROM pg_indexes WHERE schemaname = 'public' ORDER BY 1`,
 };
 

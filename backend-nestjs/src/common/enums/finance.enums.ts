@@ -125,6 +125,8 @@ export enum TipoMovimientoDeuda {
   ABONO_CRUCE_DEUDA = 'ABONO_CRUCE_DEUDA',
   /** Cargo mensual recurrente a una persona (`CargosRecurrentesPersona`, naturaleza CARGO_A_COBRAR). */
   CARGO_RECURRENTE_PERSONA = 'CARGO_RECURRENTE_PERSONA',
+  /** Parte que le toca a una persona de un gasto repartido de una sola vez (recibo de la luz, mercado, una fiesta…). */
+  CARGO_COBRO_PUNTUAL = 'CARGO_COBRO_PUNTUAL',
   /** Valor a favor / descuento mensual recurrente (naturaleza ABONO_A_FAVOR). */
   ABONO_RECURRENTE_PERSONA = 'ABONO_RECURRENTE_PERSONA',
   /** Saldo a favor de la cuota del carro aplicado al estado de cuenta de fin de mes. */

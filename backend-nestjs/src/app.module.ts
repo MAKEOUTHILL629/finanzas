@@ -7,6 +7,7 @@ import { JsonSerializationInterceptor } from './common/interceptors/json-seriali
 import { datosInvalidos } from './common/utils/legacy-http.util';
 import { validateEnv } from './config/env.validation';
 import { AuthModule } from './modules/auth/auth.module';
+import { CobrosModule } from './modules/cobros/cobros.module';
 import { ComprasCreditoModule } from './modules/compras-credito/compras-credito.module';
 import { ConsultasPagosModule } from './modules/consultas-pagos/consultas-pagos.module';
 import { CuentasFinancierasModule } from './modules/cuentas-financieras/cuentas-financieras.module';
@@ -52,6 +53,7 @@ function flattenValidationErrors(errors: ValidationError[], prefix = ''): Record
     ObligacionesAportesModule,
     RecurrentesPersonaModule,
     LiquidacionMensualModule,
+    CobrosModule,
     SubledgerDeudasModule,
   ],
   providers: [

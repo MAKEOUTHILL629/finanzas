@@ -1,5 +1,6 @@
 import { Decimal } from '../../config/decimal.config';
 import { tryToDecimal } from '../../common/utils/decimal.util';
+import { InterpretacionCuerpo } from './cuerpo-correo.util';
 
 /**
  * Normalizador de los correos de Bancolombia procesados por el Google Apps Script
@@ -48,24 +49,35 @@ export interface ItemParaRuteo {
 }
 
 /**
+ * Motivo por el que un correo se ignora (null si no hay que ignorarlo). El cuerpo (opcional) permite reconocer lo que
+ * el Apps Script deja como «Desconocido»: compras rechazadas por fondos insuficientes y avisos de inscripción.
+ */
+export function motivoIgnorar(item: ItemParaRuteo, cuerpo?: InterpretacionCuerpo | null): string | null {
+  if (item.esErrorParsing === true || esAvisoInformativo(item.asunto) || cuerpo?.informativo) return 'aviso_informativo_o_error_de_parseo';
+  if (cuerpo?.rechazada) return 'compra_rechazada_o_no_exitosa';
+  return null;
+}
+
+/**
  * Enrutamiento transaccional del plan:
- *  1. error de parseo o aviso informativo           → IGNORAR  (estado_procesamiento = IGNORADO)
- *  2. Tarjeta Credito + Compra/Avance               → COMPRA_TC (ComprasCredito a 1 cuota)
+ *  1. error de parseo, aviso informativo o compra rechazada → IGNORAR  (estado_procesamiento = IGNORADO)
+ *  2. Compra/Avance con tarjeta de crédito (cualquier método) → COMPRA_TC (ComprasCredito)
  *  3. Pago Tarjeta | Abono Tarjeta | Abono Deuda    → PAGO_TARJETA (con deduplicación ±5 min)
- *  4. Ingreso | Pago Proveedor                      → INGRESO
+ *  4. Ingreso | Pago Proveedor | transferencia recibida (cuerpo) → INGRESO
  *  5. Transferencia | Pago | Retiro | Compra (cuenta/débito) → EGRESO
  *  cualquier otra combinación                       → SIN_RUTA (queda PENDIENTE para revisión manual)
  */
-export function decidirRuta(item: ItemParaRuteo): RutaSync {
-  if (item.esErrorParsing === true || esAvisoInformativo(item.asunto)) return 'IGNORAR';
+export function decidirRuta(item: ItemParaRuteo, cuerpo?: InterpretacionCuerpo | null): RutaSync {
+  if (motivoIgnorar(item, cuerpo)) return 'IGNORAR';
 
   const tipo = sinTildes(item.tipo).trim().toLowerCase();
   const metodo = sinTildes(item.metodo).trim().toLowerCase();
   const instrumento = detectarInstrumento(item.origenRaw, item.metodo);
 
-  if (metodo === 'tarjeta credito' && (tipo === 'compra' || tipo === 'avance')) return 'COMPRA_TC';
+  if ((tipo === 'compra' || tipo === 'avance') && (metodo === 'tarjeta credito' || instrumento === 'TC')) return 'COMPRA_TC';
   if (metodo === 'pago tarjeta' || tipo === 'abono tarjeta' || tipo === 'abono deuda') return 'PAGO_TARJETA';
   if (tipo === 'ingreso' || tipo === 'pago proveedor') return 'INGRESO';
+  if (tipo === 'desconocido' && cuerpo?.recibida) return 'INGRESO';
   if (['transferencia', 'pago', 'retiro', 'compra'].includes(tipo) && instrumento === 'CUENTA' && metodo !== 'tarjeta credito') {
     return 'EGRESO';
   }
@@ -132,12 +144,16 @@ export interface CuentaCandidata {
   id: bigint;
   ultimos_4_digitos: string | null;
   moneda?: string;
+  /** Cuenta que recibe los avisos del banco que no traen número. */
+  es_principal?: boolean | null;
 }
 
 export interface TarjetaCandidata {
   id: bigint;
   descripcion: string | null;
   franquicia: string | null;
+  /** Últimos 4 dígitos (varios separados por coma si se reexpidió la tarjeta). */
+  ultimos_4_digitos?: string | null;
   tasa_interes_compra?: { toString(): string } | null;
   tasa_interes_avance?: { toString(): string } | null;
 }
@@ -153,11 +169,24 @@ export function resolverCuenta<T extends CuentaCandidata>(cuentas: T[], ultimos4
 }
 
 /**
- * Tarjeta de crédito que corresponde a los últimos 4 dígitos. `Tarjetas` no tiene columna propia: el número
- * debe estar en `descripcion` o `franquicia` (p. ej. "Visa Oro *1927"). Solo si es inequívoca.
+ * Cuenta para un aviso del banco: la que coincide con los últimos 4 dígitos o, si el aviso NO trae número
+ * («en tu cuenta de Ahorros»), la cuenta marcada como principal. Con número desconocido no se adivina.
+ */
+export function resolverCuentaOPrincipal<T extends CuentaCandidata>(cuentas: T[], ultimos4: string | null): T | null {
+  if (ultimos4) return resolverCuenta(cuentas, ultimos4);
+  const principales = cuentas.filter((c) => c.es_principal === true);
+  return principales.length === 1 ? principales[0] : null;
+}
+
+/**
+ * Tarjeta de crédito que corresponde a los últimos 4 dígitos. Primero la columna `Tarjetas.ultimos_4_digitos`
+ * (varios valores si se reexpidió); si ninguna la tiene, el número escrito en `descripcion`/`franquicia`
+ * ("Visa Oro *1927"), que es como se identificaba antes. Solo si es inequívoca.
  */
 export function resolverTarjeta<T extends TarjetaCandidata>(tarjetas: T[], ultimos4: string | null): T | null {
   if (!ultimos4) return null;
+  const porColumna = tarjetas.filter((t) => tokensDe4Digitos(t.ultimos_4_digitos).includes(ultimos4));
+  if (porColumna.length > 0) return porColumna.length === 1 ? porColumna[0] : null;
   const coincidencias = tarjetas.filter((t) => tokensDe4Digitos(`${t.descripcion ?? ''} ${t.franquicia ?? ''}`).includes(ultimos4));
   return coincidencias.length === 1 ? coincidencias[0] : null;
 }

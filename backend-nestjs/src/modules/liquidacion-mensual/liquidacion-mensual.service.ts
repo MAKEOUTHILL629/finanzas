@@ -18,21 +18,36 @@ export type OrigenMovimiento =
   | 'PRESTAMO'
   | 'RECURRENTE_COMPARTIDO'
   | 'RECURRENTE_PERSONA'
+  | 'COBRO_PUNTUAL'
   | 'CRUCE_APORTE_CARRO'
   | 'CRUCE_ENTRE_PERSONAS'
   | 'SALDO_A_FAVOR_CARRO'
   | 'PAGO_RECIBIDO'
   | 'OTRO';
 
-type Categoria = 'cuotasTarjetas' | 'cuotasPrestamos' | 'cargosRecurrentes' | 'crucesCuentas' | 'saldoAFavorAplicado' | 'abonosRealizados' | 'otros';
+type Categoria = 'cuotasTarjetas' | 'cuotasPrestamos' | 'cargosRecurrentes' | 'cobrosPuntuales' | 'crucesCuentas' | 'saldoAFavorAplicado' | 'abonosRealizados' | 'otros';
 
-const CATEGORIAS: Categoria[] = ['cuotasTarjetas', 'cuotasPrestamos', 'cargosRecurrentes', 'crucesCuentas', 'saldoAFavorAplicado', 'abonosRealizados', 'otros'];
+const CATEGORIAS: Categoria[] = ['cuotasTarjetas', 'cuotasPrestamos', 'cargosRecurrentes', 'cobrosPuntuales', 'crucesCuentas', 'saldoAFavorAplicado', 'abonosRealizados', 'otros'];
 
 const PERSONA_SELECT = { id: true, nombre: true, iniciales_nombre: true, color_representativo: true } as const;
 
-type Movimiento = Prisma.MovimientosDeudaPersonaGetPayload<{
-  include: { prestamo: { select: { origen_cruce_aporte_id: true; comentarios: true } } };
-}>;
+/** Lo que se lee de cada asiento para armar el detalle: el préstamo, la compra/cuota con su porcentaje y el cobro puntual. */
+const INCLUDE_MOVIMIENTO = {
+  prestamo: { select: { origen_cruce_aporte_id: true, comentarios: true } },
+  responsable_compra: { select: { porcentaje_pago: true, cantidad_cuotas: true } },
+  cuota_detalle: {
+    select: {
+      numero_cuota: true,
+      pago_total: true,
+      compra_ref: {
+        select: { concepto: true, valor_compra: true, fecha_compra: true, numero_cuotas: true, tarjeta_ref: { select: { franquicia: true, descripcion: true } } },
+      },
+    },
+  },
+  cobro_puntual: { select: { concepto: true, categoria: true, monto_total: true, modo_division: true, notas: true } },
+} satisfies Prisma.MovimientosDeudaPersonaInclude;
+
+type Movimiento = Prisma.MovimientosDeudaPersonaGetPayload<{ include: typeof INCLUDE_MOVIMIENTO }>;
 
 /** A qué bloque de la liquidación pertenece un asiento del sub-ledger. */
 export function categoriaDeMovimiento(tipo: string, signo: number): Categoria {
@@ -45,6 +60,8 @@ export function categoriaDeMovimiento(tipo: string, signo: number): Categoria {
     case TipoMovimientoDeuda.CARGO_RECURRENTE_PERSONA:
     case TipoMovimientoDeuda.ABONO_RECURRENTE_PERSONA:
       return 'cargosRecurrentes';
+    case TipoMovimientoDeuda.CARGO_COBRO_PUNTUAL:
+      return 'cobrosPuntuales';
     case TipoMovimientoDeuda.CARGO_CRUCE_DEUDA:
     case TipoMovimientoDeuda.ABONO_CRUCE_DEUDA:
       return 'crucesCuentas';
@@ -70,6 +87,8 @@ export function origenDeMovimiento(m: Pick<Movimiento, 'tipo_movimiento' | 'cruc
     case TipoMovimientoDeuda.CARGO_RECURRENTE_PERSONA:
     case TipoMovimientoDeuda.ABONO_RECURRENTE_PERSONA:
       return 'RECURRENTE_PERSONA';
+    case TipoMovimientoDeuda.CARGO_COBRO_PUNTUAL:
+      return 'COBRO_PUNTUAL';
     case TipoMovimientoDeuda.CARGO_CRUCE_DEUDA:
       if (m.cruce_deuda_id !== null) return 'CRUCE_ENTRE_PERSONAS';
       return m.prestamo?.origen_cruce_aporte_id ? 'CRUCE_APORTE_CARRO' : 'PRESTAMO';
@@ -119,7 +138,7 @@ export class LiquidacionMensualService {
       }),
       this.prisma.movimientosDeudaPersona.findMany({
         where: { owner_user_id: ownerUserId, periodo_imputacion: periodo, ...filtroPersona, ...vigente },
-        include: { prestamo: { select: { origen_cruce_aporte_id: true, comentarios: true } } },
+        include: INCLUDE_MOVIMIENTO,
         orderBy: [{ fecha_movimiento: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.movimientosDeudaPersona.groupBy({
@@ -262,6 +281,7 @@ export class LiquidacionMensualService {
       cuotasTarjetas: bloque('cuotasTarjetas'),
       cuotasPrestamos: bloque('cuotasPrestamos'),
       cargosRecurrentes: bloque('cargosRecurrentes'),
+      cobrosPuntuales: bloque('cobrosPuntuales'),
       crucesCuentas: bloque('crucesCuentas'),
       saldoAFavorAplicado: bloque('saldoAFavorAplicado'),
       abonosRealizados: bloque('abonosRealizados'),
@@ -294,6 +314,38 @@ export class LiquidacionMensualService {
       cargoRecurrentePersonaId: m.cargo_recurrente_persona_id,
       obligacionMesId: m.obligacion_mes_id,
       cuotaDetalleId: m.cuota_detalle_id,
+      cobroPuntualId: m.cobro_puntual_id,
+      detalle: this.detalleItem(m),
     };
+  }
+
+  /** Para «¿por qué me cobran esto?»: de qué compra es la cuota, qué porcentaje y cuántas cuotas le tocan; o de qué gasto repartido es la parte. */
+  private detalleItem(m: Movimiento) {
+    if (m.cuota_detalle?.compra_ref) {
+      const c = m.cuota_detalle.compra_ref;
+      const tarjeta = [c.tarjeta_ref?.franquicia, c.tarjeta_ref?.descripcion].filter(Boolean).join(' · ') || null;
+      return {
+        tipo: 'CUOTA_TARJETA' as const,
+        compra: c.concepto,
+        fechaCompra: c.fecha_compra,
+        valorCompra: c.valor_compra === null ? null : money(toDecimal(c.valor_compra)),
+        numeroCuota: m.cuota_detalle.numero_cuota === null ? null : Number(m.cuota_detalle.numero_cuota),
+        cuotasDeLaCompra: c.numero_cuotas,
+        cuotasQueTePertenecen: m.responsable_compra?.cantidad_cuotas ?? c.numero_cuotas,
+        porcentaje: m.responsable_compra?.porcentaje_pago === null || m.responsable_compra?.porcentaje_pago === undefined ? null : toDecimal(m.responsable_compra.porcentaje_pago),
+        valorCuotaTotal: m.cuota_detalle.pago_total === null ? null : money(toDecimal(m.cuota_detalle.pago_total)),
+        tarjeta,
+      };
+    }
+    if (m.cobro_puntual) {
+      return {
+        tipo: 'COBRO_PUNTUAL' as const,
+        categoria: m.cobro_puntual.categoria,
+        montoTotal: money(toDecimal(m.cobro_puntual.monto_total)),
+        modoDivision: m.cobro_puntual.modo_division,
+        notas: m.cobro_puntual.notas,
+      };
+    }
+    return null;
   }
 }

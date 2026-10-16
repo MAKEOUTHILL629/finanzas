@@ -132,7 +132,7 @@ export class SubledgerDeudasService {
         p.iniciales_nombre,
         p.color_representativo,
         SUM(CASE WHEN m.tipo_movimiento = 'CARGO_CUOTA_TC' AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS cuotas_tc_mes,
-        SUM(CASE WHEN m.tipo_movimiento IN ('CARGO_GASTO_COMPARTIDO', 'CARGO_RECURRENTE_PERSONA') AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS recurrentes_compartidos_mes,
+        SUM(CASE WHEN m.tipo_movimiento IN ('CARGO_GASTO_COMPARTIDO', 'CARGO_RECURRENTE_PERSONA', 'CARGO_COBRO_PUNTUAL') AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS recurrentes_compartidos_mes,
         SUM(CASE WHEN m.tipo_movimiento = 'CARGO_PRESTAMO_DIRECTO' AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS prestamos_mes,
         SUM(CASE WHEN m.tipo_movimiento = 'CARGO_CRUCE_DEUDA' AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS cruces_asumidos_mes,
         SUM(CASE WHEN m.signo = -1 AND m.periodo_imputacion = ${periodo}::char(7) THEN m.monto ELSE 0 END) AS abonos_recibidos_mes,

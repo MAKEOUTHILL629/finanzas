@@ -1,7 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { ConfigService } from '@nestjs/config';
 import { ComprasCreditoService } from '../src/modules/compras-credito/compras-credito.service';
+import { ResponsablesService } from '../src/modules/compras-credito/responsables.service';
 import { NotificacionItemDto, parseSyncBatchBody } from '../src/modules/notificaciones-correo/dto/sync-batch.dto';
+import { EjecutorCorreosService } from '../src/modules/notificaciones-correo/ejecutor-correos.service';
+import { ProductosCorreoService } from '../src/modules/notificaciones-correo/productos-correo.service';
 import { SyncBatchService } from '../src/modules/notificaciones-correo/sync-batch.service';
 import { TransaccionesService } from '../src/modules/transacciones/transacciones.service';
 import { createPrismaMock, dec } from './helpers/prisma-mock';
@@ -35,7 +38,9 @@ const TARJETAS = [
 function setup(config: Record<string, unknown> = {}) {
   const prisma = createPrismaMock();
   const configService = { get: (k: string) => ({ SYNC_TZ_OFFSET: '-05:00', ...config })[k] } as unknown as ConfigService;
-  const service = new SyncBatchService(prisma, new ComprasCreditoService(prisma), new TransaccionesService(prisma), configService);
+  const ejecutor = new EjecutorCorreosService(prisma, new ComprasCreditoService(prisma), new TransaccionesService(prisma), new ResponsablesService(prisma), configService);
+  const productos = { inferirTarjetas: jest.fn().mockResolvedValue([]) } as unknown as ProductosCorreoService;
+  const service = new SyncBatchService(prisma, ejecutor, productos);
 
   let idNotificacion = 100n;
   prisma.$queryRaw.mockImplementation(async () => [{ id: idNotificacion++ }]); // INSERT ... RETURNING id
@@ -46,7 +51,7 @@ function setup(config: Record<string, unknown> = {}) {
   prisma.comprasCredito.create.mockResolvedValue({ id: 500n });
   prisma.transacciones.create.mockImplementation(async ({ data }: any) => ({ id: 900n, ...data }));
   prisma.notificacionesCorreo.update.mockResolvedValue({});
-  return { prisma, service };
+  return { prisma, service, productos };
 }
 
 const estadoFinal = (prisma: any, llamada = 0) => prisma.notificacionesCorreo.update.mock.calls[llamada][0].data;
@@ -227,6 +232,19 @@ describe('SyncBatchService — pago de tarjeta (deduplicación ±5 min)', () => 
   const debito = () => item({ externalMessageId: '<debito>', tipo: 'Pago', metodo: 'Pago Tarjeta', origenRaw: 'cta *3698', comercio: 'T.Cred *1927', valor: '800.000' });
   const abono = () => item({ externalMessageId: '<abono>', tipo: 'Abono Tarjeta', metodo: 'Cuenta Ahorros', origenRaw: 'T.Cred *1927', valor: '800.000', hora: '14:02:40' });
 
+  const pagoExistente = (extra: Record<string, unknown> = {}) => ({
+    id: 77n,
+    tipo_transaccion: 'PAGO_TARJETA',
+    estado: 'CONFIRMADO',
+    cuenta_origen_id: 1n,
+    cuenta_destino_id: null,
+    tarjeta_pagada_id: null,
+    monto_cop: dec('800000'),
+    fecha_transaccion: new Date('2026-10-13T19:02:11.000Z'),
+    notificaciones: [],
+    ...extra,
+  });
+
   it('el débito en cuenta crea la transacción PAGO_TARJETA, con la tarjeta identificada por el comercio', async () => {
     const { prisma, service } = setup();
     const r = await service.syncBatch([debito()], OWNER);
@@ -237,22 +255,26 @@ describe('SyncBatchService — pago de tarjeta (deduplicación ±5 min)', () => 
       tarjeta_pagada_id: 10n,
       estado: 'CONFIRMADO',
     });
-    // se buscó un duplicado en la ventana ±5 min por el mismo monto
-    const where = prisma.transacciones.findFirst.mock.calls[0][0].where;
-    expect(where).toMatchObject({ owner_user_id: OWNER, tipo_transaccion: 'PAGO_TARJETA', estado: { not: 'ANULADO' } });
-    expect(where.monto_cop.toString()).toBe('800000');
-    expect(where.fecha_transaccion.gte.toISOString()).toBe('2026-10-13T18:57:11.000Z');
-    expect(where.fecha_transaccion.lte.toISOString()).toBe('2026-10-13T19:07:11.000Z');
   });
 
-  it('si ya existe un PAGO_TARJETA del mismo monto en la ventana, el correo se enlaza y NO duplica', async () => {
+  it('si ya existe un PAGO_TARJETA del mismo monto en la ventana de ±5 min, el correo se enlaza y NO duplica', async () => {
     const { prisma, service } = setup();
-    prisma.transacciones.findFirst.mockResolvedValue({ id: 77n, tarjeta_pagada_id: null });
+    prisma.transacciones.findMany.mockResolvedValue([pagoExistente()]);
     const r = await service.syncBatch([abono()], OWNER);
     expect(r.detalle[0]).toMatchObject({ estadoProcesamiento: 'CONCILIADO', transaccionId: 77, motivo: 'duplicado_de_pago_tarjeta_existente' });
     expect(prisma.transacciones.create).not.toHaveBeenCalled();
     // el abono aporta la tarjeta que el débito no traía
     expect(prisma.transacciones.update).toHaveBeenCalledWith({ where: { id: 77n }, data: { tarjeta_pagada_id: 10n } });
+  });
+
+  it('un pago existente fuera de la ventana o de otro monto no se confunde con el abono', async () => {
+    const { prisma, service } = setup();
+    prisma.transacciones.findMany.mockResolvedValue([
+      pagoExistente({ fecha_transaccion: new Date('2026-10-13T19:20:00.000Z') }), // 18 min después
+      pagoExistente({ id: 78n, monto_cop: dec('800001') }),
+    ]);
+    const r = await service.syncBatch([abono()], OWNER);
+    expect(r.detalle[0]).toMatchObject({ estadoProcesamiento: 'PENDIENTE', motivo: 'cuenta_origen_no_identificada' });
   });
 
   it('abono sin débito previo y sin cuenta identificable → PENDIENTE (no inventa una cuenta)', async () => {
@@ -264,8 +286,6 @@ describe('SyncBatchService — pago de tarjeta (deduplicación ±5 min)', () => 
 
   it('en un lote, el débito se procesa antes que el abono aunque lleguen invertidos (un solo pago)', async () => {
     const { prisma, service } = setup();
-    // simula que el segundo findFirst (abono) encuentra la transacción creada por el débito
-    prisma.transacciones.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 900n, tarjeta_pagada_id: 10n });
     const r = await service.syncBatch([abono(), debito()], OWNER);
     expect(r.detalle.map((d) => d.externalMessageId)).toEqual(['<debito>', '<abono>']);
     expect(prisma.transacciones.create).toHaveBeenCalledTimes(1);

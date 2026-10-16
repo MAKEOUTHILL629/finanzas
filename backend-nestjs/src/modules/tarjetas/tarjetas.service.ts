@@ -72,6 +72,7 @@ export class TarjetasService {
     if (dto.cuotaManejo !== undefined) data.cuota_manejo = toDbMoney(toDecimal(dto.cuotaManejo));
     if (dto.urlInfo !== undefined) data.url_info = dto.urlInfo.trim() || null;
     if (dto.extractTasas !== undefined) data.extract_tasas = dto.extractTasas;
+    if (dto.ultimos4Digitos !== undefined) data.ultimos_4_digitos = dto.ultimos4Digitos.trim() || null;
 
     const guardada =
       Object.keys(data).length > 0 ? await this.prisma.tarjetas.update({ where: { id: actual.id }, data }) : actual;
@@ -316,6 +317,7 @@ export class TarjetasService {
       diaLimitePago: t.dia_limite_pago,
       cupoTotal: numOrNull(t.cupo_total),
       permiteDolares: t.permite_dolares,
+      ultimos4Digitos: t.ultimos_4_digitos,
     };
   }
 

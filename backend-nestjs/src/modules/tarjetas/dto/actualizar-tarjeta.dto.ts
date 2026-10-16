@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { IsMoney } from '../../../common/validators/is-money.decorator';
 
 /**
@@ -19,6 +19,15 @@ export class ActualizarTarjetaDto {
   @IsString()
   @MaxLength(255)
   descripcion?: string;
+
+  @ApiPropertyOptional({
+    example: '1927,9587',
+    description: 'Últimos 4 dígitos con los que el banco reporta la tarjeta; varios grupos si se reexpidió. Cadena vacía = quitar.',
+  })
+  @IsOptional()
+  @MaxLength(60)
+  @Matches(/^(?:\d{4}(?:\s*[,;\s]\s*\d{4})*)?$/, { message: 'ultimos4Digitos debe tener 4 dígitos (o varios grupos de 4 separados por coma, p. ej. "1927,9587")' })
+  ultimos4Digitos?: string;
 
   @ApiPropertyOptional({ example: 15, description: 'Día del mes en que corta el extracto (1-31)' })
   @IsOptional()

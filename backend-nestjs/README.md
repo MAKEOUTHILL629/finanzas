@@ -42,10 +42,50 @@ curl -X POST http://localhost:9000/api/notificaciones-correo/sync-batch   -H "x-
   confirmado; Pago de tarjeta → `PAGO_TARJETA` (el débito y el "abono" del mismo pago, ±5 min y mismo monto, producen **una** sola
   transacción); avisos informativos → `IGNORADO`. Lo que no se puede resolver queda `PENDIENTE` con el `motivo` en `datos_parseados`.
 - **Cómo se identifican los productos**: los últimos 4 dígitos del correo se buscan en `CuentasFinancieras.ultimos_4_digitos`
-  (admite varios valores: `"3698,4278"`, p. ej. cuenta + tarjeta débito) y en `Tarjetas.descripcion`/`franquicia`
-  (no existe columna de últimos 4 en `Tarjetas`: escribirlos en la descripción, p. ej. `Visa Oro *1927`).
+  (admite varios valores: `"3698,4278"`, p. ej. cuenta + tarjeta débito) y en `Tarjetas.ultimos_4_digitos` (también varios: `"1927,9587"` si el
+  banco reexpidió la tarjeta; las tarjetas antiguas que llevan el número en la `descripcion` siguen funcionando). Un aviso que no trae número
+  («recibiste un pago en tu cuenta de Ahorros») va a la cuenta marcada `es_principal`.
 - Conciliación desde Angular: `PATCH /api/notificaciones-correo/:id/conciliar` (confirmar, descartar, cambiar `numeroCuotas`,
   asignar `responsables`, indicar `cuentaId`/`tarjetaId`, `convertirEnPrestamo`). Todo en una sola transacción de BD.
+
+### Correos inteligentes (`src/modules/notificaciones-correo/`)
+
+Cada correo pasa por un **planificador puro** (`planificador-correos.ts`, sin BD) que, con una fotografía en memoria del usuario
+(cuentas, tarjetas, personas, compras, transacciones y correos ya procesados), decide qué hacer. La fotografía se carga una vez por lote o
+reproceso y se va actualizando, de modo que reprocesar cientos de correos no hace cientos de consultas.
+
+| Situación | Resultado |
+|---|---|
+| Compra con tarjeta de crédito que **ya existe** (misma tarjeta, fecha ±1 día y monto) | se **enlaza** (`vinculo = EXISTENTE`), no se duplica; cada compra se enlaza a UN correo |
+| Compra nueva de un comercio que ya usas | se crea con las **cuotas, responsables y porcentajes** de tus compras anteriores del mismo comercio («plantilla», `vinculo = CREADA`, estado `CONCILIADO`) |
+| Compra de un comercio nuevo | 1 cuota sin responsables, `PENDIENTE` para completarla |
+| Dos avisos del mismo hecho (misma tarjeta/cuenta, monto y minuto, ≤ 10 min) | el segundo es `DUPLICADO` (`IGNORADO`) |
+| Transferencia/Bre-B/QR/retiro/compra débito | transacción en la cuenta de los últimos 4; si ya la registraste a mano (misma cuenta, monto y día) se enlaza |
+| Transferencia **recibida** (el script la deja como «Desconocido») | `INGRESO`; se reconoce a la persona por nombre o celular de la llave (`persona_id`) |
+| «Compra rechazada / fondos insuficientes», avisos de inscripción | `IGNORADO` |
+
+- **Normalización de comercios** (`comercio.util.ts`): `DL*DIDI FOOD CO`, `DLO*DIDI FOOD CO PAY` y `DIDI FOODS` son «didi food».
+  La plantilla solo aprende de compras **revisadas** (correos `CONCILIADO`); lo creado sin tocar (`PENDIENTE`) no es una preferencia.
+- **Productos** (`/api/notificaciones-correo/productos…`): lista los últimos 4 que aparecen en los correos y a qué cuenta/tarjeta pertenecen. Las
+  tarjetas se asocian **por evidencia** (cada correo cuya fecha y monto coinciden con una compra de la tarjeta X «vota» por X; con ≥ 3 votos y ≥ 75 % se
+  guarda sola, también al final de cada `sync-batch`). Las cuentas/débitos se proponen (`aceptar-sugerencias` o `asignar`).
+- **Reproceso** (`POST /api/notificaciones-correo/reprocesar`): `simular: true` (por defecto) devuelve el resumen sin escribir; con `simular: false`
+  corre en segundo plano (`jobId`, `GET /reprocesar/:jobId`). `desde` (yyyy-MM-dd) es la fecha de corte: antes solo se enlaza, desde ahí se registra lo que falta.
+- **Deshacer**: `PATCH /:id/conciliar { accion: "DESCARTAR" }` sobre un correo resuelto por el sistema anula lo que creó; **nunca** borra una compra o
+  transacción que ya existía (`vinculo = EXISTENTE`).
+
+## Cobros a personas (`/api/cobros-puntuales`, `/api/cobros`, `/api/publico/cobros`)
+
+- **Gastos repartidos** (la luz, el mercado, una fiesta): `POST /api/cobros-puntuales` con `modoDivision` `IGUAL | PORCENTAJE | MONTO`. Cada participante distinto del
+  propietario recibe un cargo `CARGO_COBRO_PUNTUAL` en el sub-ledger (aparece en el bloque «Servicios, mercado y eventos» de su liquidación). La suma de las partes es
+  exactamente el total (los centavos sobrantes se reparten); lo que no se reparte es del propietario. Anular conserva los asientos como `ANULADO`.
+- **Enlace para compartir** (`POST /api/cobros/enlaces`): guarda una foto de la liquidación de UNA persona (token de 256 bits, vigencia 1–180 días, revocable). Lo que ve la persona
+  (`GET /api/publico/cobros/:token`, sin sesión) incluye, por cada cuota de tarjeta, el número de cuota, el porcentaje y de qué compra es.
+- **Pago reportado** (`POST /api/publico/cobros/:token/pagos`): monto, fecha, medio, referencia y **comprobante** (JPG/PNG/WebP/PDF ≤ 2.4 MB; se valida la firma del archivo,
+  no el tipo declarado; se guarda en `bytea`). Límites: 12 intentos/10 min por enlace y 8 pendientes por enlace.
+- **Aprobación** (`POST /api/cobros/reportes/:id/aprobar`): tres caminos — enlazar el ingreso que **ya llegó por correo** (`transaccionId`, sin duplicar el movimiento), registrarlo en una
+  cuenta (`cuentaDestinoId`, `sp_registrar_abono_persona`) o solo anotar el abono. Si falta dinero, el saldo queda pendiente y pasa al siguiente cierre como «saldo anterior».
+  `GET /api/cobros/ingresos-sugeridos` lista las transferencias recibidas de personas registradas que aún no se aplicaron a su deuda.
 
 ## Angular en local
 
@@ -65,8 +105,9 @@ Las fechas "de calendario" se serializan como epoch-ms a las 00:00 **UTC**; el f
 
 ## Base de datos: objetos y scripts (`sql/`)
 
-La BD real se gestiona con SQL idempotente de `sql/` (ver `sql/README.md`): triggers, SPs, vistas y las tablas/columnas de aportes del carro y
-recurrentes por persona. `node scripts/aplicar-sql.js --dry-run` muestra qué cambiaría sin guardar nada. Reversa: `sql/rollback_001_002.sql`.
+La BD real se gestiona con SQL idempotente de `sql/` (ver `sql/README.md`): triggers, SPs, vistas, las tablas/columnas de aportes del carro y
+recurrentes por persona (`002`) y las de correos inteligentes y cobros a personas (`003`). `node scripts/aplicar-sql.js --dry-run` muestra qué cambiaría sin
+guardar nada. Reversas: `sql/rollback_001_002.sql`, `sql/rollback_003.sql`.
 
 ## Aportes del carro, cruces, recurrentes por persona y liquidación
 

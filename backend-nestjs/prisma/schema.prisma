@@ -53,6 +53,9 @@ model Users {
   cruces_deuda               CrucesDeuda[]
   movimientos_deuda          MovimientosDeudaPersona[]
   cargos_recurrentes_persona CargosRecurrentesPersona[]
+  cobros_puntuales           CobrosPuntuales[]
+  enlaces_cobro              EnlacesCobroPersona[]
+  reportes_pago              ReportesPagoPersona[]
 }
 
 model linked_accounts {
@@ -92,6 +95,10 @@ model Personas {
   responsables_recurrentes ResponsablesRecurrentes[]
   movimientos              MovimientosDeudaPersona[]
   cargos_recurrentes       CargosRecurrentesPersona[]
+  cobros_puntuales         CobrosPuntualesPersonas[]
+  enlaces_cobro            EnlacesCobroPersona[]
+  reportes_pago            ReportesPagoPersona[]
+  notificaciones           NotificacionesCorreo[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,12 +121,15 @@ model Tarjetas {
   dia_limite_pago            Int?      @db.SmallInt
   cupo_total                 Decimal?  @db.Decimal
   permite_dolares            Boolean?
+  /// Últimos 4 dígitos con los que el banco identifica la tarjeta; admite varios ("1927,9587") si se reexpidió (sql/003).
+  ultimos_4_digitos          String?
 
   owner Users? @relation(fields: [owner_user_id], references: [id])
 
   compras               ComprasCredito[]
   transacciones_pagadas Transacciones[]
   plantillas_default    PlantillasRecurrentes[]
+  notificaciones        NotificacionesCorreo[]
 }
 
 model ComprasCredito {
@@ -148,6 +158,7 @@ model ComprasCredito {
   responsables     ResponsablesComprasCredito[]
   notificaciones   NotificacionesCorreo[]
   periodos_pagados PeriodosRecurrentes[]
+  cobros_puntuales CobrosPuntuales[]
 }
 
 model CuotasDetalle {
@@ -198,6 +209,8 @@ model CuentasFinancieras {
   saldo_actual      Decimal   @default(0) @db.Decimal
   is_active         Boolean?  @default(true)
   created_at        DateTime? @default(now()) @db.Timestamptz(6)
+  /// Cuenta que recibe los avisos del banco que no traen número (p. ej. la nómina). Una por usuario (sql/003).
+  es_principal      Boolean   @default(false)
 
   owner Users @relation(fields: [owner_user_id], references: [id])
 
@@ -205,6 +218,8 @@ model CuentasFinancieras {
   transacciones_destino Transacciones[]         @relation("TxCuentaDestino")
   plantillas_debito     PlantillasRecurrentes[]
   aportes_detalle       AportesDetalle[]
+  notificaciones        NotificacionesCorreo[]
+  reportes_pago         ReportesPagoPersona[]
 }
 
 model Categorias {
@@ -247,10 +262,12 @@ model Transacciones {
   tarjeta_pagada Tarjetas?           @relation(fields: [tarjeta_pagada_id], references: [id])
   categoria      Categorias?         @relation(fields: [categoria_id], references: [id])
 
-  notificaciones  NotificacionesCorreo[]
-  periodos_pago   PeriodosRecurrentes[]
-  movimientos     MovimientosDeudaPersona[]
-  aportes_detalle AportesDetalle[]
+  notificaciones   NotificacionesCorreo[]
+  periodos_pago    PeriodosRecurrentes[]
+  movimientos      MovimientosDeudaPersona[]
+  aportes_detalle  AportesDetalle[]
+  cobros_puntuales CobrosPuntuales[]
+  reportes_pago    ReportesPagoPersona[]
 }
 
 model NotificacionesCorreo {
@@ -266,10 +283,27 @@ model NotificacionesCorreo {
   transaccion_generada_id    BigInt?
   compra_credito_generada_id BigInt?
   created_at                 DateTime? @default(now()) @db.Timestamptz(6)
+  /// Columnas indexables que rellena el sync-batch / el reproceso (sql/003).
+  ultimos_4                  String?   @db.VarChar(4)
+  comercio_normalizado       String?   @db.VarChar
+  monto_original             Decimal?  @db.Decimal(18, 4)
+  moneda                     String?   @db.Char(3)
+  tarjeta_id                 BigInt?
+  cuenta_id                  BigInt?
+  persona_id                 BigInt?
+  /// CREADA = la app registró la compra/transacción; EXISTENTE = ya existía y se enlazó; DUPLICADO = otro correo del mismo hecho.
+  vinculo                    String?   @db.VarChar(12)
+  notificacion_original_id   BigInt?
 
-  owner                Users           @relation(fields: [owner_user_id], references: [id])
-  transaccion_generada Transacciones?  @relation(fields: [transaccion_generada_id], references: [id])
-  compra_generada      ComprasCredito? @relation(fields: [compra_credito_generada_id], references: [id])
+  owner                Users                  @relation(fields: [owner_user_id], references: [id])
+  transaccion_generada Transacciones?         @relation(fields: [transaccion_generada_id], references: [id])
+  compra_generada      ComprasCredito?        @relation(fields: [compra_credito_generada_id], references: [id])
+  tarjeta              Tarjetas?              @relation(fields: [tarjeta_id], references: [id])
+  cuenta               CuentasFinancieras?    @relation(fields: [cuenta_id], references: [id])
+  persona              Personas?              @relation(fields: [persona_id], references: [id])
+  original             NotificacionesCorreo?  @relation("NotificacionDuplicada", fields: [notificacion_original_id], references: [id])
+  duplicadas           NotificacionesCorreo[] @relation("NotificacionDuplicada")
+  cobros_puntuales     CobrosPuntuales[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -506,6 +540,7 @@ model MovimientosDeudaPersona {
   cruce_deuda_id              BigInt?
   cargo_recurrente_persona_id BigInt?
   obligacion_mes_id           BigInt?
+  cobro_puntual_id            BigInt?
   appsheet_row_id             String?   @unique
   concepto                    String    @db.VarChar
   estado                      String?   @db.VarChar
@@ -521,6 +556,9 @@ model MovimientosDeudaPersona {
   cruce_deuda        CrucesDeuda?                @relation(fields: [cruce_deuda_id], references: [id])
   cargo_recurrente   CargosRecurrentesPersona?   @relation(fields: [cargo_recurrente_persona_id], references: [id])
   obligacion_mes     ObligacionesMes?            @relation(fields: [obligacion_mes_id], references: [id])
+  cobro_puntual      CobrosPuntuales?            @relation(fields: [cobro_puntual_id], references: [id])
+
+  reportes_pago ReportesPagoPersona[]
 }
 
 /// Cargos o abonos mensuales recurrentes a una persona, vitalicios o por X meses (sql/002).
@@ -548,6 +586,107 @@ model CargosRecurrentesPersona {
   persona Personas @relation(fields: [persona_id], references: [id])
 
   movimientos MovimientosDeudaPersona[]
+}
+
+/// Cobro de un gasto repartido entre varias personas (recibo de la luz, mercado, una fiesta…). Cada participante
+/// distinto del propietario genera un cargo CARGO_COBRO_PUNTUAL en el sub-ledger (sql/003).
+model CobrosPuntuales {
+  id                 BigInt    @id @default(autoincrement())
+  owner_user_id      BigInt
+  concepto           String    @db.VarChar
+  categoria          String    @default("OTRO") @db.VarChar
+  fecha_gasto        DateTime  @db.Date
+  periodo_imputacion String    @db.Char(7)
+  monto_total        Decimal   @db.Decimal(15, 2)
+  modo_division      String    @default("IGUAL") @db.VarChar
+  transaccion_id     BigInt?
+  compra_credito_id  BigInt?
+  notificacion_id    BigInt?
+  notas              String?
+  estado             String    @default("ACTIVO") @db.VarChar
+  created_at         DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner        Users                 @relation(fields: [owner_user_id], references: [id])
+  transaccion  Transacciones?        @relation(fields: [transaccion_id], references: [id])
+  compra       ComprasCredito?       @relation(fields: [compra_credito_id], references: [id])
+  notificacion NotificacionesCorreo? @relation(fields: [notificacion_id], references: [id])
+
+  participantes CobrosPuntualesPersonas[]
+  movimientos   MovimientosDeudaPersona[]
+}
+
+model CobrosPuntualesPersonas {
+  id         BigInt   @id @default(autoincrement())
+  cobro_id   BigInt
+  persona_id BigInt
+  monto      Decimal  @db.Decimal(15, 2)
+  porcentaje Decimal? @db.Decimal(8, 4)
+  es_propio  Boolean  @default(false)
+
+  cobro   CobrosPuntuales @relation(fields: [cobro_id], references: [id], onDelete: Cascade)
+  persona Personas        @relation(fields: [persona_id], references: [id])
+
+  @@unique([cobro_id, persona_id])
+}
+
+/// Enlace público (por token) con la liquidación de una persona en un periodo. `snapshot` es lo que ella ve.
+model EnlacesCobroPersona {
+  id                 BigInt    @id @default(autoincrement())
+  owner_user_id      BigInt
+  persona_id         BigInt
+  periodo            String    @db.Char(7)
+  token              String    @unique @db.VarChar(64)
+  snapshot           Json
+  snapshot_at        DateTime  @default(now()) @db.Timestamptz(6)
+  mensaje            String?
+  instrucciones_pago String?
+  expira_at          DateTime  @db.Timestamptz(6)
+  revocado           Boolean   @default(false)
+  vistas             Int       @default(0)
+  ultima_vista_at    DateTime? @db.Timestamptz(6)
+  created_at         DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner   Users    @relation(fields: [owner_user_id], references: [id])
+  persona Personas @relation(fields: [persona_id], references: [id])
+
+  reportes ReportesPagoPersona[]
+
+  @@unique([owner_user_id, persona_id, periodo])
+}
+
+/// Pago que la persona dice haber hecho desde el enlace público, con su comprobante; el propietario lo aprueba o rechaza.
+model ReportesPagoPersona {
+  id                 BigInt    @id @default(autoincrement())
+  owner_user_id      BigInt
+  enlace_id          BigInt?
+  persona_id         BigInt
+  periodo            String    @db.Char(7)
+  monto_reportado    Decimal   @db.Decimal(15, 2)
+  fecha_pago         DateTime  @db.Date
+  medio              String?   @db.VarChar
+  referencia         String?   @db.VarChar
+  comentario         String?
+  comprobante_nombre String?   @db.VarChar
+  comprobante_tipo   String?   @db.VarChar
+  comprobante_tamano Int?
+  comprobante        Bytes?
+  estado             String    @default("PENDIENTE") @db.VarChar
+  monto_aprobado     Decimal?  @db.Decimal(15, 2)
+  motivo_rechazo     String?
+  cuenta_destino_id  BigInt?
+  transaccion_id     BigInt?
+  movimiento_id      BigInt?
+  revisado_at        DateTime? @db.Timestamptz(6)
+  created_at         DateTime? @default(now()) @db.Timestamptz(6)
+
+  owner          Users                    @relation(fields: [owner_user_id], references: [id])
+  enlace         EnlacesCobroPersona?     @relation(fields: [enlace_id], references: [id])
+  persona        Personas                 @relation(fields: [persona_id], references: [id])
+  cuenta_destino CuentasFinancieras?      @relation(fields: [cuenta_destino_id], references: [id])
+  transaccion    Transacciones?           @relation(fields: [transaccion_id], references: [id])
+  movimiento     MovimientosDeudaPersona? @relation(fields: [movimiento_id], references: [id])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

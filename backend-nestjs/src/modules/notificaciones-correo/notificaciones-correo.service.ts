@@ -185,9 +185,13 @@ export class NotificacionesCorreoService {
     return this.prisma.$transaction(async (tx) => {
       const notificacion = await tx.notificacionesCorreo.findFirst({ where: { id: BigInt(id), owner_user_id: ownerUserId } });
       if (!notificacion) throw new NotFoundException(`Notificación ${id} no encontrada`);
+      // Lo que el sync resolvió solo (tiene `vinculo`) se puede DESHACER descartándolo; confirmar de nuevo no tiene sentido.
+      const deshacerAutomatico =
+        (dto.accion ?? 'CONFIRMAR') === 'DESCARTAR' && notificacion.estado_procesamiento === EstadoNotificacionCorreo.CONCILIADO && (notificacion.vinculo ?? null) !== null;
       if (
-        notificacion.estado_procesamiento === EstadoNotificacionCorreo.CONCILIADO ||
-        notificacion.estado_procesamiento === EstadoNotificacionCorreo.IGNORADO
+        !deshacerAutomatico &&
+        (notificacion.estado_procesamiento === EstadoNotificacionCorreo.CONCILIADO ||
+          notificacion.estado_procesamiento === EstadoNotificacionCorreo.IGNORADO)
       ) {
         throw new ConflictException(`La notificación ya fue ${notificacion.estado_procesamiento?.toLowerCase()}`);
       }
@@ -248,13 +252,23 @@ export class NotificacionesCorreoService {
     ownerUserId: bigint,
   ): Promise<ResultadoConciliacion> {
     let transaccion = transaccionActual;
-    if (transaccionActual && transaccionActual.estado === EstadoTransaccion.PENDIENTE_REVISION) {
+    // Solo se deshace lo que la app CREÓ por este correo: lo que ya existía (vínculo EXISTENTE) o es de otro correo no se toca.
+    const vinculo = notificacion.vinculo ?? null;
+    const creadaPorEsteCorreo = vinculo === null || vinculo === 'CREADA';
+    const anulable =
+      transaccionActual?.estado === EstadoTransaccion.PENDIENTE_REVISION ||
+      (transaccionActual?.estado === EstadoTransaccion.CONFIRMADO && vinculo === 'CREADA'); // la confirmó el sync, no el usuario
+    if (transaccionActual && creadaPorEsteCorreo && anulable) {
       transaccion = await tx.transacciones.update({ where: { id: transaccionActual.id }, data: { estado: EstadoTransaccion.ANULADO } });
     }
-    if (compraActual) await this.compras.deleteTx(tx, Number(compraActual.id), ownerUserId);
+    if (compraActual && creadaPorEsteCorreo) await this.compras.deleteTx(tx, Number(compraActual.id), ownerUserId);
     const actualizada = await tx.notificacionesCorreo.update({
       where: { id: notificacion.id },
-      data: { estado_procesamiento: EstadoNotificacionCorreo.IGNORADO },
+      data: {
+        estado_procesamiento: EstadoNotificacionCorreo.IGNORADO,
+        // El correo deja de reclamar la compra/transacción: queda libre para enlazarse a otro o seguir sola.
+        ...(creadaPorEsteCorreo ? {} : { compra_credito_generada_id: null, transaccion_generada_id: null }),
+      },
     });
     return { notificacion: actualizada, transaccion, compra: null, prestamoId: null, responsablesCreados: 0 };
   }

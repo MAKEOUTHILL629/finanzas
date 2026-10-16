@@ -8,5 +8,6 @@ import { LiquidacionMensualService } from './liquidacion-mensual.service';
   imports: [RecurrentesPersonaModule, SubledgerDeudasModule],
   controllers: [LiquidacionMensualController],
   providers: [LiquidacionMensualService],
+  exports: [LiquidacionMensualService],
 })
 export class LiquidacionMensualModule {}

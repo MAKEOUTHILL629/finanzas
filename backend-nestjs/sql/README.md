@@ -7,6 +7,8 @@ la especificación de aportes del carro / cruces / recurrentes por persona. Pris
 |---|---|
 | `001_objetos_documento.sql` | Vistas 4.2 (la antigua `vw_ResumenObligacionesMes` queda como `_legacy`), triggers 1–8, `sp_pagar_extracto_tarjeta`, `sp_registrar_abono_persona`, `sp_actualizar_trm_compra_usd` e índices. Con **guardas** para lo que escribe Scala (sin `owner_user_id`) y las restricciones reales (`monto > 0`). Ver D32–D34 en `MIGRATION_INVENTORY.md`. |
 | `002_aportes_cruces_recurrentes.sql` | `ObligacionesMes.saldo_a_favor_aplicado`, columnas de trazabilidad en `AportesDetalle` y `MovimientosDeudaPersona`, tabla `CargosRecurrentesPersona` e índice único de periodo. Solo DDL aditivo. |
+| `003_correos_inteligentes_cobros.sql` | `Tarjetas.ultimos_4_digitos`, `CuentasFinancieras.es_principal`, columnas indexables y vínculos en `NotificacionesCorreo` (rellena las nuevas con lo que ya estaba en `datos_parseados`), tablas `CobrosPuntuales`, `CobrosPuntualesPersonas`, `EnlacesCobroPersona`, `ReportesPagoPersona` y `MovimientosDeudaPersona.cobro_puntual_id`. Solo DDL aditivo: no borra ni reescribe filas existentes. |
+| `rollback_003.sql` | Reversa manual de `003` (**borra** las tablas de cobros/enlaces/reportes y las columnas añadidas). No lo aplica el script. |
 | `rollback_001_002.sql` | Reversa manual: restaura los Triggers 3 y 5 y la vista antiguos y borra lo añadido (**borra** `CargosRecurrentesPersona`). No lo aplica el script. |
 
 ```bash

@@ -10,9 +10,16 @@ import { CuotasDetalleService } from '../../src/modules/compras-credito/cuotas-d
 import { PagosService } from '../../src/modules/compras-credito/pagos.service';
 import { ResponsablesService } from '../../src/modules/compras-credito/responsables.service';
 import { ConsultasPagosService } from '../../src/modules/consultas-pagos/consultas-pagos.service';
+import { CobroPublicoService } from '../../src/modules/cobros/cobro-publico.service';
+import { CobrosPuntualesService } from '../../src/modules/cobros/cobros-puntuales.service';
+import { EnlacesCobroService } from '../../src/modules/cobros/enlaces-cobro.service';
+import { ReportesPagoService } from '../../src/modules/cobros/reportes-pago.service';
 import { CuentasFinancierasService } from '../../src/modules/cuentas-financieras/cuentas-financieras.service';
 import { GastosRecurrentesService } from '../../src/modules/gastos-recurrentes/gastos-recurrentes.service';
 import { NotificacionesCorreoService } from '../../src/modules/notificaciones-correo/notificaciones-correo.service';
+import { EjecutorCorreosService } from '../../src/modules/notificaciones-correo/ejecutor-correos.service';
+import { ProductosCorreoService } from '../../src/modules/notificaciones-correo/productos-correo.service';
+import { ReprocesoCorreosService } from '../../src/modules/notificaciones-correo/reproceso-correos.service';
 import { SyncBatchService } from '../../src/modules/notificaciones-correo/sync-batch.service';
 import { LiquidacionMensualService } from '../../src/modules/liquidacion-mensual/liquidacion-mensual.service';
 import { AportesCarroService } from '../../src/modules/obligaciones-aportes/aportes-carro.service';
@@ -67,7 +74,17 @@ const QUITAR_ANTES_DE_MIGRAR = `
   ALTER TABLE "MovimientosDeudaPersona" DROP COLUMN IF EXISTS cargo_recurrente_persona_id, DROP COLUMN IF EXISTS obligacion_mes_id;
   DROP TABLE IF EXISTS "CargosRecurrentesPersona" CASCADE;
   ALTER TABLE "AportesDetalle" DROP COLUMN IF EXISTS cuenta_financiera_id, DROP COLUMN IF EXISTS transaccion_id, DROP COLUMN IF EXISTS origen_obligacion_mes_id;
-  ALTER TABLE "ObligacionesMes" DROP COLUMN IF EXISTS saldo_a_favor_aplicado;`;
+  ALTER TABLE "ObligacionesMes" DROP COLUMN IF EXISTS saldo_a_favor_aplicado;
+  -- 003 (correos inteligentes y cobros)
+  DROP TABLE IF EXISTS "ReportesPagoPersona", "EnlacesCobroPersona", "CobrosPuntualesPersonas" CASCADE;
+  ALTER TABLE "MovimientosDeudaPersona" DROP COLUMN IF EXISTS cobro_puntual_id;
+  DROP TABLE IF EXISTS "CobrosPuntuales" CASCADE;
+  ALTER TABLE "NotificacionesCorreo"
+    DROP COLUMN IF EXISTS ultimos_4, DROP COLUMN IF EXISTS comercio_normalizado, DROP COLUMN IF EXISTS monto_original,
+    DROP COLUMN IF EXISTS moneda, DROP COLUMN IF EXISTS tarjeta_id, DROP COLUMN IF EXISTS cuenta_id, DROP COLUMN IF EXISTS persona_id,
+    DROP COLUMN IF EXISTS vinculo, DROP COLUMN IF EXISTS notificacion_original_id;
+  ALTER TABLE "CuentasFinancieras" DROP COLUMN IF EXISTS es_principal;
+  ALTER TABLE "Tarjetas" DROP COLUMN IF EXISTS ultimos_4_digitos;`;
 
 let esquemaListo = false;
 
@@ -129,6 +146,9 @@ export interface Servicios {
   recurrentes: GastosRecurrentesService;
   notificaciones: NotificacionesCorreoService;
   syncBatch: SyncBatchService;
+  productosCorreo: ProductosCorreoService;
+  reproceso: ReprocesoCorreosService;
+  ejecutorCorreos: EjecutorCorreosService;
   obligaciones: ObligacionesAportesService;
   aportesCarro: AportesCarroService;
   recurrentesPersona: RecurrentesPersonaService;
@@ -138,6 +158,10 @@ export interface Servicios {
   subledger: SubledgerDeudasService;
   tarjetas: TarjetasService;
   transacciones: TransaccionesService;
+  cobrosPuntuales: CobrosPuntualesService;
+  enlacesCobro: EnlacesCobroService;
+  reportesPago: ReportesPagoService;
+  cobroPublico: CobroPublicoService;
 }
 
 export async function crearServicios(): Promise<Servicios> {
@@ -151,6 +175,10 @@ export async function crearServicios(): Promise<Servicios> {
   const responsables = new ResponsablesService(prisma);
   const subledger = new SubledgerDeudasService(prisma);
   const recurrentesPersona = new RecurrentesPersonaService(prisma);
+  const productosCorreo = new ProductosCorreoService(prisma);
+  const liquidacion = new LiquidacionMensualService(prisma, recurrentesPersona, subledger);
+  const enlacesCobro = new EnlacesCobroService(prisma, liquidacion);
+  const ejecutorCorreos = new EjecutorCorreosService(prisma, compras, transacciones, responsables, config);
   return {
     prisma,
     compras,
@@ -162,16 +190,23 @@ export async function crearServicios(): Promise<Servicios> {
     cuentas: new CuentasFinancierasService(prisma),
     recurrentes: new GastosRecurrentesService(prisma, transacciones),
     notificaciones: new NotificacionesCorreoService(prisma, transacciones, compras, responsables, prestamos, config),
-    syncBatch: new SyncBatchService(prisma, compras, transacciones, config),
+    syncBatch: new SyncBatchService(prisma, ejecutorCorreos, productosCorreo),
+    productosCorreo,
+    reproceso: new ReprocesoCorreosService(prisma, ejecutorCorreos, productosCorreo),
+    ejecutorCorreos,
     obligaciones: new ObligacionesAportesService(prisma),
     aportesCarro: new AportesCarroService(prisma, transacciones),
     recurrentesPersona,
-    liquidacion: new LiquidacionMensualService(prisma, recurrentesPersona, subledger),
+    liquidacion,
     cortes: new CortesCobroService(prisma, prestamos),
     prestamos,
     subledger,
     tarjetas: new TarjetasService(prisma, new WebScrapingService(), config),
     transacciones,
+    cobrosPuntuales: new CobrosPuntualesService(prisma),
+    enlacesCobro,
+    reportesPago: new ReportesPagoService(prisma, enlacesCobro),
+    cobroPublico: new CobroPublicoService(prisma),
   };
 }
 

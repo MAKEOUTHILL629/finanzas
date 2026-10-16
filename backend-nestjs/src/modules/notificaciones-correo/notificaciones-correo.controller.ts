@@ -4,8 +4,11 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { WebhookOrJwtGuard } from '../../common/guards/webhook-or-jwt.guard';
 import { ConciliarCorreoDto, IngestaCorreoDto, NotificacionesFiltroDto } from './dto/notificacion.dto';
+import { AceptarSugerenciasDto, AsignarProductoDto, ReprocesarDto } from './dto/productos-correo.dto';
 import { parseSyncBatchBody, SyncNotificacionesBatchDto } from './dto/sync-batch.dto';
 import { NotificacionesCorreoService } from './notificaciones-correo.service';
+import { ProductosCorreoService } from './productos-correo.service';
+import { ReprocesoCorreosService } from './reproceso-correos.service';
 import { SyncBatchService } from './sync-batch.service';
 
 @ApiTags('Notificaciones de correo')
@@ -15,6 +18,8 @@ export class NotificacionesCorreoController {
   constructor(
     private readonly notificaciones: NotificacionesCorreoService,
     private readonly syncBatch: SyncBatchService,
+    private readonly productos: ProductosCorreoService,
+    private readonly reproceso: ReprocesoCorreosService,
   ) {}
 
   @Get()
@@ -53,6 +58,56 @@ export class NotificacionesCorreoController {
   })
   ingesta(@Body() dto: IngestaCorreoDto, @CurrentUser('userId') userId: bigint) {
     return this.notificaciones.ingestar(dto, userId);
+  }
+
+  // ── Productos detectados por los últimos 4 dígitos (antes de `:id` para que no se confundan) ──
+
+  @Get('productos')
+  @ApiOperation({
+    summary: 'Productos que aparecen en los correos (últimos 4 dígitos), a qué cuenta/tarjeta pertenecen y qué se sugiere',
+    description: 'Las tarjetas se sugieren por evidencia (compras con la misma fecha y monto); las cuentas, por el rótulo «Cuenta *NNNN» del banco.',
+  })
+  listarProductos(@CurrentUser('userId') userId: bigint) {
+    return this.productos.listar(userId);
+  }
+
+  @Post('productos/inferir')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Asocia solos a su tarjeta los últimos 4 dígitos con evidencia suficiente (≥3 compras coincidentes y ≥75 %)' })
+  inferirProductos(@CurrentUser('userId') userId: bigint) {
+    return this.productos.inferirTarjetas(userId, { aplicar: true });
+  }
+
+  @Post('productos/asignar')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Asigna unos últimos 4 dígitos a una cuenta/tarjeta existente o crea el producto con ellos' })
+  asignarProducto(@Body() dto: AsignarProductoDto, @CurrentUser('userId') userId: bigint) {
+    return this.productos.asignar(dto, userId);
+  }
+
+  @Post('productos/aceptar-sugerencias')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Acepta de una vez las sugerencias: asocia tarjetas por evidencia, crea las cuentas detectadas y agrega los débitos' })
+  aceptarSugerencias(@Body() dto: AceptarSugerenciasDto, @CurrentUser('userId') userId: bigint) {
+    return this.productos.aceptarSugerencias(userId, dto.ultimos4);
+  }
+
+  @Post('reprocesar')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Reprocesa los correos pendientes: enlaza lo que ya existe, evita duplicados y registra lo que falta',
+    description:
+      '`simular` (por defecto true) devuelve el resumen sin escribir nada. Con `simular=false` corre en segundo plano y devuelve `jobId`; ' +
+      'se consulta con GET /reprocesar/:jobId. `desde` (yyyy-MM-dd) limita el REGISTRO de lo nuevo: antes de esa fecha solo se enlaza.',
+  })
+  reprocesar(@Body() dto: ReprocesarDto, @CurrentUser('userId') userId: bigint) {
+    return this.reproceso.reprocesar(dto, userId);
+  }
+
+  @Get('reprocesar/:jobId')
+  @ApiOperation({ summary: 'Avance y resultado de un reproceso en segundo plano' })
+  estadoReproceso(@Param('jobId') jobId: string, @CurrentUser('userId') userId: bigint) {
+    return this.reproceso.estado(jobId, userId);
   }
 
   @Get(':id')

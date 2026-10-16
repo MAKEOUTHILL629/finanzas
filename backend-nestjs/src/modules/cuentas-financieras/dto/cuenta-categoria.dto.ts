@@ -36,6 +36,11 @@ export class CreateCuentaFinancieraDto {
   @Length(3, 3)
   moneda?: string;
 
+  @ApiPropertyOptional({ example: false, description: 'Cuenta que recibe los avisos del banco que no traen número (p. ej. la nómina)' })
+  @IsOptional()
+  @IsBoolean()
+  esPrincipal?: boolean;
+
   @ApiPropertyOptional({
     example: 1500000,
     description: 'Saldo con el que se abre la cuenta. Después solo lo modifica el Trigger 2 de la BD.',
@@ -73,6 +78,11 @@ export class UpdateCuentaFinancieraDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiPropertyOptional({ description: 'Marca la cuenta principal; al marcarla se desmarca la anterior' })
+  @IsOptional()
+  @IsBoolean()
+  esPrincipal?: boolean;
 }
 
 export class CreateCategoriaDto {

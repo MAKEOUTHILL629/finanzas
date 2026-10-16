@@ -29,18 +29,22 @@ export class CuentasFinancierasService {
   }
 
   /** `saldo_actual` se inicializa aquí; después solo cambia por el Trigger 2 (nunca con UPDATE desde NestJS). */
-  create(dto: CreateCuentaFinancieraDto, ownerUserId: bigint) {
-    return this.prisma.cuentasFinancieras.create({
-      data: {
-        owner_user_id: ownerUserId,
-        nombre: dto.nombre,
-        tipo_cuenta: dto.tipoCuenta,
-        banco_entidad: dto.bancoEntidad ?? null,
-        ultimos_4_digitos: dto.ultimos4Digitos ?? null,
-        moneda: (dto.moneda ?? 'COP').toUpperCase(),
-        saldo_actual: toDbMoney(toDecimal(dto.saldoInicial ?? 0)),
-        is_active: true,
-      },
+  async create(dto: CreateCuentaFinancieraDto, ownerUserId: bigint) {
+    return this.prisma.$transaction(async (tx) => {
+      if (dto.esPrincipal) await tx.cuentasFinancieras.updateMany({ where: { owner_user_id: ownerUserId, es_principal: true }, data: { es_principal: false } });
+      return tx.cuentasFinancieras.create({
+        data: {
+          owner_user_id: ownerUserId,
+          nombre: dto.nombre,
+          tipo_cuenta: dto.tipoCuenta,
+          banco_entidad: dto.bancoEntidad ?? null,
+          ultimos_4_digitos: dto.ultimos4Digitos ?? null,
+          moneda: (dto.moneda ?? 'COP').toUpperCase(),
+          saldo_actual: toDbMoney(toDecimal(dto.saldoInicial ?? 0)),
+          is_active: true,
+          es_principal: dto.esPrincipal === true,
+        },
+      });
     });
   }
 
@@ -52,7 +56,14 @@ export class CuentasFinancierasService {
     if (dto.bancoEntidad !== undefined) data.banco_entidad = dto.bancoEntidad;
     if (dto.ultimos4Digitos !== undefined) data.ultimos_4_digitos = dto.ultimos4Digitos;
     if (dto.isActive !== undefined) data.is_active = dto.isActive;
-    return this.prisma.cuentasFinancieras.update({ where: { id: cuenta.id }, data });
+    if (dto.esPrincipal !== undefined) data.es_principal = dto.esPrincipal;
+    return this.prisma.$transaction(async (tx) => {
+      // Una sola cuenta principal por usuario: al marcar esta se desmarca la anterior.
+      if (dto.esPrincipal === true) {
+        await tx.cuentasFinancieras.updateMany({ where: { owner_user_id: ownerUserId, es_principal: true, NOT: { id: cuenta.id } }, data: { es_principal: false } });
+      }
+      return tx.cuentasFinancieras.update({ where: { id: cuenta.id }, data });
+    });
   }
 
   /** Solo se elimina físicamente una cuenta sin movimientos; si no, se debe desactivar (`isActive=false`). */
