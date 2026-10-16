@@ -19,6 +19,7 @@ import { RecurrentesPersonaModule } from './modules/recurrentes-persona/recurren
 import { SubledgerDeudasModule } from './modules/subledger-deudas/subledger-deudas.module';
 import { TransaccionesModule } from './modules/transacciones/transacciones.module';
 import { HomeModule } from './modules/home/home.module';
+import { LookupModule } from './modules/lookup/lookup.module';
 import { PersonasModule } from './modules/personas/personas.module';
 import { PrestamosModule } from './modules/prestamos/prestamos.module';
 import { TarjetasModule } from './modules/tarjetas/tarjetas.module';
@@ -41,6 +42,7 @@ function flattenValidationErrors(errors: ValidationError[], prefix = ''): Record
     PrismaModule,
     AuthModule,
     HomeModule,
+    LookupModule,
     PersonasModule,
     TarjetasModule,
     ComprasCreditoModule,
