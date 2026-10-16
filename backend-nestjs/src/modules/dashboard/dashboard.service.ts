@@ -92,7 +92,8 @@ export class DashboardService {
     const [usuario, cuentas, tarjetas, extractos, flujo, personas, movimientos, alertas] = await Promise.all([
       this.prisma.users.findUnique({ where: { id: ownerUserId }, select: { name: true } }),
       this.lookup.cuentas(ownerUserId),
-      this.lookup.tarjetas(ownerUserId),
+      // El resumen de tarjetas (cupo, vencimientos, extracto) es de las de crédito con número; el débito y el producto «sin número» no entran.
+      Promise.resolve(this.lookup.tarjetas(ownerUserId)).then((lista) => lista.filter((t) => t.tipo !== 'DEBITO' && !t.esGenerica)),
       this.extractosPorTarjeta(ownerUserId, periodo),
       this.subledger.flujoCaja(periodo, ownerUserId),
       this.estadoCuentaPersonas.listar(ownerUserId, periodo),

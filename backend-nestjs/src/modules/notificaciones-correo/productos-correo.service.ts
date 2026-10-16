@@ -4,6 +4,7 @@ import { TipoCuentaFinanciera } from '../../common/enums/finance.enums';
 import { toDbMoney, toDecimal } from '../../common/utils/decimal.util';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { cuentasConDebitos, soloCredito } from '../tarjetas/tipos-tarjeta.util';
 import { asegurarPlastico } from '../tarjetas/plasticos.db';
 import { resolverCuenta, resolverTarjeta, tokensDe4Digitos } from './bancolombia-normalizer.util';
 import { AsignarProductoDto } from './dto/productos-correo.dto';
@@ -76,12 +77,15 @@ export class ProductosCorreoService {
   // ───────────────────────────── lectura ─────────────────────────────
 
   async listar(ownerUserId: bigint): Promise<ProductoDetectado[]> {
-    const [filas, votos, cuentas, tarjetas] = await Promise.all([
+    const [filas, votos, cuentasDb, tarjetasDb] = await Promise.all([
       this.filasProductos(ownerUserId),
       this.votosPorTarjeta(ownerUserId),
       this.prisma.cuentasFinancieras.findMany({ where: { owner_user_id: ownerUserId }, orderBy: { id: 'asc' } }),
       this.prisma.tarjetas.findMany({ where: { owner_user_id: ownerUserId }, orderBy: { id: 'asc' } }),
     ]);
+    // Una tarjeta de débito identifica a su cuenta; solo las de crédito se asignan a compras.
+    const tarjetas = soloCredito(tarjetasDb);
+    const cuentas = cuentasConDebitos(cuentasDb, tarjetasDb);
 
     const principal = cuentas.find((c) => c.es_principal && c.is_active !== false) ?? (cuentas.filter((c) => c.is_active !== false).length === 1 ? cuentas.find((c) => c.is_active !== false) : undefined);
     const noDebito = filas.filter((f) => f.instrumento !== 'TC' && !f.es_debito && !resolverCuenta(cuentas, f.ultimos_4));
@@ -149,11 +153,13 @@ export class ProductosCorreoService {
    * coinciden con una compra de la tarjeta X «vota» por X. Con suficiente evidencia (≥3 votos y ≥75 %) se guarda sola.
    */
   async inferirTarjetas(ownerUserId: bigint, opciones: { aplicar: boolean }): Promise<AprendizajeTarjeta[]> {
-    const [votos, tarjetas, cuentas] = await Promise.all([
+    const [votos, tarjetasDb, cuentasDb] = await Promise.all([
       this.votosPorTarjeta(ownerUserId),
       this.prisma.tarjetas.findMany({ where: { owner_user_id: ownerUserId } }),
       this.prisma.cuentasFinancieras.findMany({ where: { owner_user_id: ownerUserId }, select: { id: true, ultimos_4_digitos: true } }),
     ]);
+    const tarjetas = soloCredito(tarjetasDb);
+    const cuentas = cuentasConDebitos(cuentasDb, tarjetasDb);
     const porU4 = new Map<string, FilaVoto[]>();
     for (const v of votos) porU4.set(v.u4, [...(porU4.get(v.u4) ?? []), v]);
 
@@ -178,12 +184,14 @@ export class ProductosCorreoService {
   // ───────────────────────────── asignación manual ─────────────────────────────
 
   async asignar(dto: AsignarProductoDto, ownerUserId: bigint) {
-    const [tarjetas, cuentas] = await Promise.all([
+    const [todasTarjetas, cuentas] = await Promise.all([
       this.prisma.tarjetas.findMany({ where: { owner_user_id: ownerUserId } }),
       this.prisma.cuentasFinancieras.findMany({ where: { owner_user_id: ownerUserId } }),
     ]);
+    const tarjetas = soloCredito(todasTarjetas);
     const yaTarjeta = resolverTarjeta(tarjetas, dto.ultimos4);
-    const yaCuenta = resolverCuenta(cuentas, dto.ultimos4);
+    // Los dígitos de una tarjeta de débito ya pertenecen a su cuenta (solo para detectar el conflicto: no se guardan en la cuenta).
+    const yaCuenta = resolverCuenta(cuentasConDebitos(cuentas, todasTarjetas), dto.ultimos4);
     const ocupante = yaTarjeta ? nombreTarjeta(yaTarjeta) : yaCuenta ? yaCuenta.nombre : null;
     const mismoDestino = dto.id !== undefined && ((dto.destino === 'TARJETA' && yaTarjeta?.id === BigInt(dto.id)) || (dto.destino === 'CUENTA' && yaCuenta?.id === BigInt(dto.id)));
     if (ocupante && !mismoDestino) {

@@ -32,6 +32,7 @@ import { CortesCobroService } from '../../src/modules/prestamos/cortes-cobro.ser
 import { RecurrentesPersonaService } from '../../src/modules/recurrentes-persona/recurrentes-persona.service';
 import { PrestamosService } from '../../src/modules/prestamos/prestamos.service';
 import { SubledgerDeudasService } from '../../src/modules/subledger-deudas/subledger-deudas.service';
+import { ProductosFinancierosService } from '../../src/modules/productos-financieros/productos-financieros.service';
 import { PlasticosTarjetaService } from '../../src/modules/tarjetas/plasticos-tarjeta.service';
 import { TarjetasService } from '../../src/modules/tarjetas/tarjetas.service';
 import { WebScrapingService } from '../../src/modules/tarjetas/web-scraping.service';
@@ -90,6 +91,9 @@ const QUITAR_ANTES_DE_MIGRAR = `
     DROP COLUMN IF EXISTS vinculo, DROP COLUMN IF EXISTS notificacion_original_id;
   ALTER TABLE "CuentasFinancieras" DROP COLUMN IF EXISTS es_principal;
   ALTER TABLE "Tarjetas" DROP COLUMN IF EXISTS ultimos_4_digitos;
+  -- 006 (tarjetas de débito, vínculo tarjeta → cuenta y periodo de uso); al quitar la columna cae su FK
+  ALTER TABLE "Tarjetas" DROP COLUMN IF EXISTS tipo_tarjeta, DROP COLUMN IF EXISTS cuenta_id, DROP COLUMN IF EXISTS alias, DROP COLUMN IF EXISTS es_generica;
+  ALTER TABLE "CuentasFinancieras" DROP COLUMN IF EXISTS es_generica, DROP COLUMN IF EXISTS fecha_inicio_uso, DROP COLUMN IF EXISTS fecha_fin_uso;
   -- 004 (plásticos de tarjeta); ComprasCredito.plastico_id apunta a TarjetaPlasticos: primero la columna.
   ALTER TABLE "ComprasCredito" DROP COLUMN IF EXISTS plastico_id;
   DROP TABLE IF EXISTS "TarjetaPlasticos" CASCADE;`;
@@ -168,6 +172,7 @@ export interface Servicios {
   subledger: SubledgerDeudasService;
   tarjetas: TarjetasService;
   plasticos: PlasticosTarjetaService;
+  productos: ProductosFinancierosService;
   transacciones: TransaccionesService;
   cobrosPuntuales: CobrosPuntualesService;
   enlacesCobro: EnlacesCobroService;
@@ -219,6 +224,7 @@ export async function crearServicios(): Promise<Servicios> {
     subledger,
     tarjetas: new TarjetasService(prisma, new WebScrapingService(), config),
     plasticos: new PlasticosTarjetaService(prisma),
+    productos: new ProductosFinancierosService(prisma),
     transacciones,
     cobrosPuntuales: new CobrosPuntualesService(prisma),
     enlacesCobro,

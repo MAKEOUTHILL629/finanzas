@@ -91,10 +91,33 @@ async function inventario(client) {
 /** Tablas con datos del usuario: el DDL no debe cambiar su número de filas (un script que lo haga se cancela). */
 const TABLAS_PROTEGIDAS = ['MovimientosDeudaPersona', 'ComprasCredito', 'CuotasDetalle', 'ResponsablesComprasCredito', 'Tarjetas', 'Prestamos', 'Personas'];
 
+/** Tablas a las que una semilla (`NNN_semilla_*.sql`) puede AGREGAR filas (nunca quitar): se informa cuántas. */
+const TABLAS_SEMILLA = ['Tarjetas', 'TarjetaPlasticos', 'CuentasFinancieras'];
+const TABLAS_VIGILADAS = [...new Set([...TABLAS_PROTEGIDAS, ...TABLAS_SEMILLA])];
+
 async function conteos(client) {
   const salida = {};
-  for (const t of TABLAS_PROTEGIDAS) salida[t] = (await client.query(`SELECT count(*)::int AS n FROM "${t}"`)).rows[0].n;
+  for (const t of TABLAS_VIGILADAS) salida[t] = (await client.query(`SELECT count(*)::int AS n FROM "${t}"`)).rows[0].n;
   return salida;
+}
+
+/** Productos financieros tal como quedan (solo tipo, últimos 4, estado y fechas), para revisar el resultado de la semilla. */
+async function resumenProductos(client) {
+  const { rows } = await client.query(`
+    SELECT t.id AS tarjeta, t.tipo_tarjeta AS tipo, t.franquicia, t.es_generica AS generica, t.cuenta_id AS cuenta,
+           p.ultimos_4 AS u4, p.es_activo AS activo, to_char(p.vigente_desde, 'YYYY-MM-DD') AS desde, to_char(p.vigente_hasta, 'YYYY-MM-DD') AS hasta
+      FROM "Tarjetas" t LEFT JOIN "TarjetaPlasticos" p ON p.tarjeta_id = t.id ORDER BY t.id, p.id`);
+  console.log('\nTarjetas y plásticos tras la semilla:');
+  for (const r of rows) {
+    const plastico = r.u4 ? `*${r.u4} ${r.activo ? 'ACTIVO' : 'archivado'} ${r.desde ?? '?'} … ${r.hasta ?? '(vigente)'}` : '(sin plásticos)';
+    console.log(`  tarjeta ${r.tarjeta} ${r.tipo}${r.generica ? ' (sin número)' : ''} ${r.franquicia ?? ''}${r.cuenta ? ` · cuenta ${r.cuenta}` : ''} → ${plastico}`);
+  }
+  const cuentas = await client.query(`SELECT id, nombre, ultimos_4_digitos AS u4, is_active AS activa, es_generica AS generica, es_principal AS principal,
+      to_char(fecha_inicio_uso, 'YYYY-MM-DD') AS desde, to_char(fecha_fin_uso, 'YYYY-MM-DD') AS hasta FROM "CuentasFinancieras" ORDER BY id`);
+  console.log('Cuentas tras la semilla:');
+  for (const c of cuentas.rows) {
+    console.log(`  cuenta ${c.id} «${c.nombre}» ${c.u4 ? `*${c.u4}` : '(sin número)'}${c.generica ? ' genérica' : ''}${c.principal ? ' principal' : ''} ${c.activa === false ? 'inactiva' : 'activa'} ${c.desde ?? '?'} … ${c.hasta ?? '(en uso)'}`);
+  }
 }
 
 async function main() {
@@ -133,10 +156,15 @@ async function main() {
       if (nuevos.length) console.log(`  + ${clave}: ${nuevos.join(', ')}`);
       if (quitados.length) console.log(`  - ${clave}: ${quitados.join(', ')}`);
     }
-    console.log('\nFilas de las tablas con datos (el DDL no debe cambiarlas):');
-    for (const t of TABLAS_PROTEGIDAS) console.log(`  ${t}: ${conteosAntes[t]} → ${conteosDespues[t]}`);
-    const alteradas = TABLAS_PROTEGIDAS.filter((t) => conteosAntes[t] !== conteosDespues[t]);
+    const hayAdicionPermitida = archivos.some((f) => /^\d{3}_semilla/i.test(f));
+    console.log('\nFilas de las tablas con datos (el DDL no debe cambiarlas; una semilla solo puede agregar a tarjetas, plásticos y cuentas):');
+    for (const t of TABLAS_VIGILADAS) console.log(`  ${t}: ${conteosAntes[t]} → ${conteosDespues[t]}`);
+    const alteradas = TABLAS_VIGILADAS.filter((t) => {
+      if (conteosAntes[t] === conteosDespues[t]) return false;
+      return !(hayAdicionPermitida && TABLAS_SEMILLA.includes(t) && conteosDespues[t] > conteosAntes[t]);
+    });
     if (alteradas.length > 0) throw new Error(`El script modificó el número de filas de ${alteradas.join(', ')}: se cancela`);
+    if (hayAdicionPermitida) await resumenProductos(client);
 
     if (dryRun) {
       await client.query('ROLLBACK');

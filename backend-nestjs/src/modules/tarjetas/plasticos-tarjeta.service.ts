@@ -6,9 +6,10 @@ import { money, sumDecimals, toDecimal } from '../../common/utils/decimal.util';
 import { idNum } from '../../common/utils/legacy-format.util';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ActualizarPlasticoDto, ReemplazarPlasticoDto } from './dto/plasticos.dto';
-import { aBase, plasticosDeTarjeta, reemplazarPlastico, sincronizarCadena } from './plasticos.db';
+import { ActualizarPlasticoDto, AgregarPlasticoDto, ReemplazarPlasticoDto } from './dto/plasticos.dto';
+import { aBase, ocupanteDeUltimos4, plasticosDeTarjeta, reemplazarPlastico, sincronizarCadena } from './plasticos.db';
 import { MotivoReemplazo, PlasticoBase, plasticoParaFecha } from './plasticos.util';
+import { EstadoPlastico, estadosDePlasticos } from './tipos-tarjeta.util';
 
 export interface PlasticoJson {
   id: number;
@@ -22,6 +23,24 @@ export interface PlasticoJson {
   notas: string | null;
   /** Compras que tienen este plástico guardado (las deducidas por fecha no cuentan). */
   compras?: number;
+  /** ACTIVA · REEMPLAZADA (la línea siguió con otro plástico) · INACTIVA (histórico sin continuidad). Lo calcula `anotarPlasticos`. */
+  estado?: EstadoPlastico;
+  /** Alias de `vigenteDesde` / `vigenteHasta` / `reemplazaAId` con los nombres del plan de producto. */
+  fechaInicioUso?: string | null;
+  fechaFinUso?: string | null;
+  tarjetaReemplazadaId?: number | null;
+}
+
+/** Añade el estado de cada plástico (según los demás de su línea) y los alias de fechas/reemplazo. Recibe los plásticos de UNA línea. */
+export function anotarPlasticos(lista: PlasticoJson[]): PlasticoJson[] {
+  const estados = estadosDePlasticos(lista);
+  return lista.map((p) => ({
+    ...p,
+    estado: estados.get(p.id) ?? 'INACTIVA',
+    fechaInicioUso: p.vigenteDesde,
+    fechaFinUso: p.vigenteHasta,
+    tarjetaReemplazadaId: p.reemplazaAId,
+  }));
 }
 
 const fecha = (d: Date | null): string | null => (d ? formatIsoDate(d) : null);
@@ -76,7 +95,43 @@ export class PlasticosTarjetaService {
       include: { _count: { select: { compras: true } } },
       orderBy: { id: 'asc' },
     });
-    return this.ordenar(filas.map((f) => plasticoJson(f, f._count.compras)));
+    return anotarPlasticos(this.ordenar(filas.map((f) => plasticoJson(f, f._count.compras))));
+  }
+
+  /**
+   * Registra un plástico HISTÓRICO (ya no vigente) o uno anterior que faltaba, sin tocar el plástico activo ni las compras.
+   * Para un plástico nuevo que pasa a ser el vigente se usa `reemplazar`.
+   */
+  async agregarHistorico(tarjetaId: number, dto: AgregarPlasticoDto, ownerUserId: bigint) {
+    const desde = dto.vigenteDesde ? this.fechaValida(dto.vigenteDesde, 'vigenteDesde') : null;
+    const hasta = dto.vigenteHasta ? this.fechaValida(dto.vigenteHasta, 'vigenteHasta') : null;
+    if (desde && hasta && desde.getTime() > hasta.getTime()) throw datosInvalidos({ vigenteHasta: ['La fecha de cierre no puede ser anterior al inicio'] });
+
+    await this.prisma.$transaction(async (tx) => {
+      const tarjeta = await tx.tarjetas.findFirst({ where: { id: BigInt(tarjetaId), owner_user_id: ownerUserId }, select: { id: true, owner_user_id: true } });
+      if (!tarjeta) throw new NotFoundException(`Tarjeta ${tarjetaId} no encontrada`);
+      const existentes = await plasticosDeTarjeta(tx, tarjeta.id);
+      if (existentes.some((p) => p.ultimos_4 === dto.ultimos4)) {
+        throw new HttpException({ message: `El plástico terminado en ${dto.ultimos4} ya está registrado en esta tarjeta` }, HttpStatus.CONFLICT);
+      }
+      const ocupante = await ocupanteDeUltimos4(tx, ownerUserId, dto.ultimos4, tarjeta.id);
+      if (ocupante) throw new HttpException({ message: `Los dígitos ${dto.ultimos4} ya pertenecen a "${ocupante}"` }, HttpStatus.CONFLICT);
+      await tx.tarjetaPlasticos.create({
+        data: {
+          tarjeta_id: tarjeta.id,
+          owner_user_id: tarjeta.owner_user_id,
+          ultimos_4: dto.ultimos4,
+          // Sin ningún plástico registrado todavía, el que se agrega es el de la línea (activo salvo que traiga fecha de cierre).
+          es_activo: existentes.length === 0 && !hasta,
+          vigente_desde: desde,
+          vigente_hasta: hasta,
+          motivo_reemplazo: dto.motivo ?? null,
+          notas: dto.notas?.trim() || null,
+        },
+      });
+      await sincronizarCadena(tx, tarjeta.id);
+    });
+    return this.listar(tarjetaId, ownerUserId);
   }
 
   /** Archiva el plástico activo y registra el nuevo (o reactiva uno archivado con esos dígitos). El historial no se toca. */
@@ -210,7 +265,7 @@ export class PlasticosTarjetaService {
     const pagina_ = filtradas.slice((pagina - 1) * limite, pagina * limite);
     return {
       tarjeta: { id: idNum(tarjeta.id), franquicia: tarjeta.franquicia, descripcion: tarjeta.descripcion },
-      plasticos: this.ordenar(plasticosDb.map((p) => plasticoJson(p, compras.filter((c) => c.plastico_id === p.id).length))),
+      plasticos: anotarPlasticos(this.ordenar(plasticosDb.map((p) => plasticoJson(p, compras.filter((c) => c.plastico_id === p.id).length)))),
       filtro: { plasticoId: f.plasticoId ?? null, desde: f.desde ?? null, hasta: f.hasta ?? null },
       totales,
       porPlastico: [...resumen.values()].map((r) => ({

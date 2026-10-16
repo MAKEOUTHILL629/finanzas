@@ -2,17 +2,19 @@ import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma, TarjetaPlasticos, Tarjetas } from '@prisma/client';
 import { Decimal } from '../../config/decimal.config';
-import { isValidPeriodo } from '../../common/utils/date.util';
+import { isValidPeriodo, parseIsoDate, todayLocal } from '../../common/utils/date.util';
 import { money, rate, toDb, toDbMoney, toDbRate, toDecimal } from '../../common/utils/decimal.util';
 import { formatLegacyIso, idNum, numOrNull, timestampToDayMillis } from '../../common/utils/legacy-format.util';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActualizarTarjetaDto } from './dto/actualizar-tarjeta.dto';
+import { CrearTarjetaDto } from './dto/crear-tarjeta.dto';
 import { PagarExtractoDto } from './dto/pagar-extracto.dto';
-import { asegurarPlastico, ocupanteDeUltimos4, sincronizarCadena } from './plasticos.db';
-import { plasticoJson } from './plasticos-tarjeta.service';
+import { asegurarPlastico, ocupanteDeUltimos4, reemplazarPlastico, sincronizarCadena } from './plasticos.db';
+import { anotarPlasticos, plasticoJson } from './plasticos-tarjeta.service';
 import { tokensUltimos4 } from './plasticos.util';
 import { ResultadoScrapingTarjeta, TarjetaScrapeable, WebScrapingService } from './web-scraping.service';
+import { TipoTarjeta } from './tipos-tarjeta.util';
 
 interface ResumenScraping {
   tarjetaId: number;
@@ -63,6 +65,107 @@ export class TarjetasService {
   }
 
   /**
+   * `POST /api/tarjetas` — crea una tarjeta (crédito o débito) con su primer plástico, o un plástico que RENUEVA a otro
+   * (`plasticoAnteriorId`: el anterior queda archivado con todo su historial). Una cuenta puede tener varias tarjetas.
+   */
+  async crear(dto: CrearTarjetaDto, ownerUserId: bigint) {
+    const tipo: TipoTarjeta = dto.tipo;
+    const esGenerica = dto.esGenerica === true;
+    if (!dto.ultimos4 && !esGenerica) throw datosInvalidos({ ultimos4: ['Indica los últimos 4 dígitos del plástico (solo un producto «sin número» puede omitirlos)'] });
+    if (dto.plasticoAnteriorId !== undefined && (dto.estado === 'INACTIVA' || esGenerica)) {
+      throw datosInvalidos({ plasticoAnteriorId: ['Una renovación crea el plástico vigente de la tarjeta; no puede ser histórica ni «sin número»'] });
+    }
+    const inicio = dto.fechaInicioUso ? parseIsoDate(dto.fechaInicioUso) : null;
+    const fin = dto.fechaFinUso ? parseIsoDate(dto.fechaFinUso) : null;
+    if (dto.fechaInicioUso && !inicio) throw datosInvalidos({ fechaInicioUso: ['fechaInicioUso debe tener formato yyyy-MM-dd'] });
+    if (dto.fechaFinUso && !fin) throw datosInvalidos({ fechaFinUso: ['fechaFinUso debe tener formato yyyy-MM-dd'] });
+    if (inicio && fin && inicio.getTime() > fin.getTime()) throw datosInvalidos({ fechaFinUso: ['La fecha de fin no puede ser anterior al inicio'] });
+    if (fin && dto.estado !== 'INACTIVA') throw datosInvalidos({ fechaFinUso: ['Solo una tarjeta histórica (INACTIVA) tiene fecha de fin'] });
+
+    const id = await this.prisma.$transaction(async (tx) => {
+      if (dto.plasticoAnteriorId !== undefined) return this.renovar(tx, dto, ownerUserId, inicio);
+
+      const cuentaId = await this.validarCuenta(tx, tipo, dto.cuentaId ?? null, ownerUserId);
+      if (dto.ultimos4) {
+        const ocupante = await ocupanteDeUltimos4(tx, ownerUserId, dto.ultimos4);
+        if (ocupante) throw new HttpException({ message: `Los dígitos ${dto.ultimos4} ya pertenecen a "${ocupante}"` }, HttpStatus.CONFLICT);
+      }
+      const linea = await tx.tarjetas.create({
+        data: {
+          owner_user_id: ownerUserId,
+          tipo_tarjeta: tipo,
+          cuenta_id: cuentaId,
+          franquicia: dto.franquicia?.trim() || (tipo === 'DEBITO' ? 'Débito' : 'Tarjeta de crédito'),
+          descripcion: dto.descripcion?.trim() || null,
+          alias: dto.alias?.trim() || null,
+          es_generica: esGenerica,
+          ...(tipo === 'CREDITO'
+            ? {
+                dia_corte: dto.diaCorte ?? null,
+                dia_limite_pago: dto.diaLimitePago ?? null,
+                cupo_total: dto.cupoTotal !== undefined ? toDbMoney(toDecimal(dto.cupoTotal)) : null,
+              }
+            : {}),
+        },
+      });
+      if (dto.ultimos4) {
+        const activo = dto.estado !== 'INACTIVA';
+        await tx.tarjetaPlasticos.create({
+          data: {
+            tarjeta_id: linea.id,
+            owner_user_id: ownerUserId,
+            ultimos_4: dto.ultimos4,
+            es_activo: activo,
+            vigente_desde: inicio ?? (activo ? todayLocal() : null),
+            vigente_hasta: activo ? null : fin,
+            notas: dto.notas?.trim() || null,
+          },
+        });
+        await sincronizarCadena(tx, linea.id);
+      }
+      return linea.id;
+    });
+    return this.obtener(id, ownerUserId);
+  }
+
+  /** Renovación: el plástico nuevo entra en la línea del anterior (que queda archivado) y se conserva el historial de compras. */
+  private async renovar(tx: Prisma.TransactionClient, dto: CrearTarjetaDto, ownerUserId: bigint, inicio: Date | null): Promise<bigint> {
+    const anterior = await tx.tarjetaPlasticos.findFirst({
+      where: { id: BigInt(dto.plasticoAnteriorId as number), tarjeta: { owner_user_id: ownerUserId } },
+      select: { tarjeta: { select: { id: true, owner_user_id: true, tipo_tarjeta: true } } },
+    });
+    if (!anterior) throw new HttpException({ message: `Plástico ${dto.plasticoAnteriorId} no encontrado` }, HttpStatus.NOT_FOUND);
+    if (anterior.tarjeta.tipo_tarjeta !== dto.tipo) {
+      throw datosInvalidos({ tipo: [`El plástico anterior es de una tarjeta de ${anterior.tarjeta.tipo_tarjeta === 'DEBITO' ? 'débito' : 'crédito'}`] });
+    }
+    await reemplazarPlastico(tx, anterior.tarjeta, {
+      ultimos4: dto.ultimos4 as string,
+      inicio: inicio ?? todayLocal(),
+      motivo: dto.motivo ?? null,
+      notas: dto.notas?.trim() || null,
+    });
+    return anterior.tarjeta.id;
+  }
+
+  /** La cuenta existe y es del usuario; en débito es obligatoria. Devuelve el id a guardar (o null). */
+  private async validarCuenta(db: Pick<Prisma.TransactionClient, 'cuentasFinancieras'>, tipo: TipoTarjeta, cuentaId: number | null, ownerUserId: bigint): Promise<bigint | null> {
+    if (cuentaId === null) {
+      if (tipo === 'DEBITO') throw datosInvalidos({ cuentaId: ['Una tarjeta de débito pertenece a una cuenta: elige cuál'] });
+      return null;
+    }
+    const cuenta = await db.cuentasFinancieras.findFirst({ where: { id: BigInt(cuentaId), owner_user_id: ownerUserId }, select: { id: true } });
+    if (!cuenta) throw new HttpException({ message: `Cuenta ${cuentaId} no encontrada` }, HttpStatus.NOT_FOUND);
+    return cuenta.id;
+  }
+
+  /** Una tarjeta con sus plásticos, con la misma forma que `GET /api/tarjetas`. */
+  async obtener(id: bigint | number, ownerUserId: bigint) {
+    const t = await this.prisma.tarjetas.findFirst({ where: { id: BigInt(id), owner_user_id: ownerUserId }, include: { plasticos: { orderBy: { id: 'asc' } } } });
+    if (!t) throw new HttpException({ message: `Tarjeta ${id} no encontrada` }, HttpStatus.NOT_FOUND);
+    return this.tarjetaJson(t);
+  }
+
+  /**
    * `PUT /api/tarjetas/:id` — edita la configuración de una tarjeta (día de corte, límite de pago, cupo, tasas…).
    * Solo se escriben los campos recibidos. Devuelve la tarjeta con la misma forma que `GET /api/tarjetas`.
    */
@@ -71,6 +174,17 @@ export class TarjetasService {
     if (!actual) throw new HttpException({ message: `Tarjeta ${id} no encontrada` }, HttpStatus.NOT_FOUND);
 
     const data: Prisma.TarjetasUncheckedUpdateInput = {};
+    const tipoFinal = (dto.tipo ?? actual.tipo_tarjeta) as TipoTarjeta;
+    const cuentaFinal = dto.cuentaId === undefined ? (actual.cuenta_id === null ? null : idNum(actual.cuenta_id)) : dto.cuentaId;
+    if (dto.tipo !== undefined && dto.tipo !== actual.tipo_tarjeta) {
+      if (dto.tipo === 'DEBITO') {
+        const compras = await this.prisma.comprasCredito.count({ where: { tarjeta: actual.id } });
+        if (compras > 0) throw new HttpException({ message: `La tarjeta tiene ${compras} compra(s) a crédito: no puede pasar a débito` }, HttpStatus.CONFLICT);
+      }
+      data.tipo_tarjeta = dto.tipo;
+    }
+    if (dto.tipo !== undefined || dto.cuentaId !== undefined) data.cuenta_id = await this.validarCuenta(this.prisma, tipoFinal, cuentaFinal, ownerUserId);
+    if (dto.alias !== undefined) data.alias = dto.alias.trim() || null;
     if (dto.franquicia !== undefined) data.franquicia = dto.franquicia.trim();
     if (dto.descripcion !== undefined) data.descripcion = dto.descripcion.trim();
     if (dto.diaCorte !== undefined) data.dia_corte = dto.diaCorte;
@@ -368,11 +482,16 @@ export class TarjetasService {
 
   /** JSON de `tarjetaEscritura` (legacy) + los campos del esquema Supabase + los plásticos. */
   private tarjetaJson(t: Tarjetas & { plasticos?: TarjetaPlasticos[] }) {
-    const plasticos = (t.plasticos ?? []).map((p) => plasticoJson(p)).sort((a, b) => Number(b.esActivo) - Number(a.esActivo) || b.id - a.id);
+    const plasticos = anotarPlasticos((t.plasticos ?? []).map((p) => plasticoJson(p)).sort((a, b) => Number(b.esActivo) - Number(a.esActivo) || b.id - a.id));
     const activo = plasticos.find((p) => p.esActivo) ?? null;
     return {
       id: idNum(t.id),
       franquicia: t.franquicia,
+      /** CREDITO | DEBITO. Una tarjeta de débito pertenece a una cuenta (`cuentaId`) y no tiene compras a crédito. */
+      tipo: t.tipo_tarjeta as TipoTarjeta,
+      cuentaId: t.cuenta_id === null ? null : idNum(t.cuenta_id),
+      alias: t.alias,
+      esGenerica: t.es_generica,
       fechaCreacion: this.fechaCreacionIso(t),
       descripcion: t.descripcion,
       tasaInteresCompra: numOrNull(t.tasa_interes_compra),

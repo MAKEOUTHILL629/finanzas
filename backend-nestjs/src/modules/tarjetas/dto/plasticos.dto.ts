@@ -28,6 +28,34 @@ export class ReemplazarPlasticoDto {
   notas?: string;
 }
 
+/** `POST /api/tarjetas/:id/plasticos` — agrega un plástico histórico (o el primero de una línea) sin cambiar el activo. */
+export class AgregarPlasticoDto {
+  @ApiProperty({ example: '8949', description: 'Últimos 4 dígitos del plástico' })
+  @Matches(/^\d{4}$/, { message: 'ultimos4 debe tener exactamente 4 dígitos' })
+  ultimos4: string;
+
+  @ApiPropertyOptional({ example: '2025-01-05', description: 'Desde cuándo se usó (opcional)' })
+  @IsOptional()
+  @Matches(FECHA, { message: MSG_FECHA })
+  vigenteDesde?: string;
+
+  @ApiPropertyOptional({ example: '2025-03-10', description: 'Hasta cuándo se usó; con fecha de cierre queda como histórico' })
+  @IsOptional()
+  @Matches(FECHA, { message: MSG_FECHA })
+  vigenteHasta?: string;
+
+  @ApiPropertyOptional({ enum: MOTIVOS_REEMPLAZO, description: 'Por qué dejó de usarse' })
+  @IsOptional()
+  @IsIn([...MOTIVOS_REEMPLAZO])
+  motivo?: MotivoReemplazo;
+
+  @ApiPropertyOptional({ example: 'Se perdió en un viaje' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notas?: string;
+}
+
 /** `PATCH /api/tarjetas/:id/plasticos/:plasticoId` — corrige fechas o notas; `esActivo: true` lo vuelve el plástico activo. */
 export class ActualizarPlasticoDto {
   @ApiPropertyOptional({ example: '2025-01-10', nullable: true, description: 'null = desconocido' })

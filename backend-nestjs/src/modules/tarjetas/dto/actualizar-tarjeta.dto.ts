@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { IsMoney } from '../../../common/validators/is-money.decorator';
+import { TIPOS_TARJETA, TipoTarjeta } from '../tipos-tarjeta.util';
 
 /**
  * `PUT /api/tarjetas/:id`. Todos los campos son opcionales: solo se modifica lo que llega.
@@ -8,6 +9,23 @@ import { IsMoney } from '../../../common/validators/is-money.decorator';
  * `periodo_facturacion` de las cuotas ya guardadas (para eso hay que volver a calcular las cuotas de la compra).
  */
 export class ActualizarTarjetaDto {
+  @ApiPropertyOptional({ enum: TIPOS_TARJETA, description: 'No se puede pasar a DEBITO una tarjeta que ya tiene compras a crédito' })
+  @IsOptional()
+  @IsIn([...TIPOS_TARJETA])
+  tipo?: TipoTarjeta;
+
+  @ApiPropertyOptional({ example: 7, nullable: true, description: 'Cuenta a la que pertenece. Obligatoria en débito; null la quita en una tarjeta de crédito' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  cuentaId?: number | null;
+
+  @ApiPropertyOptional({ example: 'Débito *3698', description: 'Nombre corto para mostrar; vacío = quitarlo' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  alias?: string;
+
   @ApiPropertyOptional({ example: 'Visa' })
   @IsOptional()
   @IsString()

@@ -77,6 +77,10 @@ export class CuentasFinancierasService {
         `La cuenta tiene ${movimientos} transacción(es); desactívala con PATCH { "isActive": false } en lugar de eliminarla`,
       );
     }
+    const tarjetas = await this.prisma.tarjetas.count({ where: { cuenta_id: cuenta.id } });
+    if (tarjetas > 0) {
+      throw new ConflictException(`La cuenta tiene ${tarjetas} tarjeta(s) asociada(s); muévelas o elimínalas antes, o desactiva la cuenta`);
+    }
     await this.prisma.cuentasFinancieras.delete({ where: { id: cuenta.id } });
   }
 

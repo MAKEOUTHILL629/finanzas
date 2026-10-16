@@ -71,7 +71,7 @@ describe('LookupService — forma uniforme y filtrado por usuario', () => {
     ]);
     const r = await service.cuentas(OWNER);
     expect(r.map((c) => [c.id, c.activa, c.esPrincipal, c.saldoActual])).toEqual([[1, true, true, 1500.5], [2, true, false, 0], [3, false, false, -3]]);
-    expect(r[0]).toEqual({ id: 1, nombre: 'Ahorros', tipoCuenta: 'AHORROS', bancoEntidad: 'Bancolombia', ultimos4: '3698', moneda: 'COP', saldoActual: 1500.5, activa: true, esPrincipal: true });
+    expect(r[0]).toEqual({ id: 1, nombre: 'Ahorros', tipoCuenta: 'AHORROS', bancoEntidad: 'Bancolombia', ultimos4: '3698', moneda: 'COP', saldoActual: 1500.5, activa: true, esPrincipal: true, esGenerica: false });
   });
 
   it('categorías: las del sistema y las del usuario, marcando las del sistema', async () => {

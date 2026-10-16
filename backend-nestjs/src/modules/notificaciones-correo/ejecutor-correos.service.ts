@@ -5,6 +5,7 @@ import { Decimal } from '../../config/decimal.config';
 import { EstadoTransaccion } from '../../common/enums/finance.enums';
 import { money, rate, toDecimal } from '../../common/utils/decimal.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { cuentasConDebitos, soloCredito } from '../tarjetas/tipos-tarjeta.util';
 import { ComprasCreditoService } from '../compras-credito/compras-credito.service';
 import { ResponsablesService } from '../compras-credito/responsables.service';
 import { completarPlasticoDeCompra } from '../tarjetas/plasticos.db';
@@ -42,7 +43,7 @@ export class EjecutorCorreosService {
   // ───────────────────────────── fotografía ─────────────────────────────
 
   async cargarSnapshot(ownerUserId: bigint, opciones: { desdeFecha?: Date | null } = {}): Promise<SnapshotCorreos> {
-    const [cuentas, tarjetas, personas, compras, notificaciones, transacciones, ultimaUsd] = await Promise.all([
+    const [cuentasBase, todasTarjetas, personas, compras, notificaciones, transacciones, ultimaUsd] = await Promise.all([
       this.prisma.cuentasFinancieras.findMany({
         where: { owner_user_id: ownerUserId, is_active: { not: false } },
         select: { id: true, ultimos_4_digitos: true, moneda: true, es_principal: true },
@@ -115,6 +116,9 @@ export class EjecutorCorreosService {
         select: { tasa_cambio_aplicada: true },
       }),
     ]);
+    // Las compras y los extractos son de las tarjetas de crédito; los últimos 4 de una tarjeta de débito identifican a su cuenta.
+    const tarjetas = soloCredito(todasTarjetas);
+    const cuentas = cuentasConDebitos(cuentasBase, todasTarjetas);
 
     const yo = personas.find((p) => p.linked_user_id === ownerUserId) ?? personas.find((p) => p.legacy_appsheet_id === LEGACY_YO) ?? null;
     const trm = this.config.get<string | number>('DEFAULT_TRM_USD');

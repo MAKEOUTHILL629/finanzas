@@ -109,6 +109,7 @@ export class ComprasCreditoCsvService {
     return this.prisma.tarjetas.findFirst({
       where: {
         owner_user_id: ownerUserId,
+        tipo_tarjeta: 'CREDITO',
         OR: [
           ...(esId ? [{ id: BigInt(identificador) }] : []),
           { franquicia: { equals: identificador, mode: 'insensitive' as const } },

@@ -124,8 +124,17 @@ model Tarjetas {
   permite_dolares            Boolean?
   /// Últimos 4 dígitos con los que el banco identifica la tarjeta; admite varios ("1927,9587") si se reexpidió (sql/003).
   ultimos_4_digitos          String?
+  /// CREDITO | DEBITO (sql/006). Una tarjeta de débito siempre cuelga de una cuenta.
+  tipo_tarjeta               String    @default("CREDITO") @db.VarChar(7)
+  /// Cuenta a la que pertenece (obligatoria en débito; en crédito, la que la paga, opcional). Una cuenta puede tener varias tarjetas.
+  cuenta_id                  BigInt?
+  /// Nombre corto para mostrar («Débito *3698»).
+  alias                      String?   @db.VarChar
+  /// Producto que recibe lo que el banco avisa SIN los últimos 4 dígitos («Crédito sin número»).
+  es_generica                Boolean   @default(false)
 
-  owner Users? @relation(fields: [owner_user_id], references: [id])
+  owner  Users?              @relation(fields: [owner_user_id], references: [id])
+  cuenta CuentasFinancieras? @relation("TarjetaCuenta", fields: [cuenta_id], references: [id], onDelete: Restrict)
 
   compras               ComprasCredito[]
   transacciones_pagadas Transacciones[]
@@ -150,9 +159,9 @@ model TarjetaPlasticos {
   created_at       DateTime  @default(now()) @db.Timestamptz(6)
   updated_at       DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
 
-  tarjeta         Tarjetas          @relation(fields: [tarjeta_id], references: [id], onDelete: Cascade)
-  owner           Users?            @relation(fields: [owner_user_id], references: [id])
-  reemplaza_a     TarjetaPlasticos? @relation("PlasticoReemplazo", fields: [reemplaza_a_id], references: [id])
+  tarjeta         Tarjetas           @relation(fields: [tarjeta_id], references: [id], onDelete: Cascade)
+  owner           Users?             @relation(fields: [owner_user_id], references: [id])
+  reemplaza_a     TarjetaPlasticos?  @relation("PlasticoReemplazo", fields: [reemplaza_a_id], references: [id])
   reemplazado_por TarjetaPlasticos[] @relation("PlasticoReemplazo")
   compras         ComprasCredito[]
 
@@ -180,9 +189,9 @@ model ComprasCredito {
   /// Plástico con el que se hizo la compra, si se sabe (sql/004). NULL = no registrado (la API lo infiere por fecha).
   plastico_id           BigInt?
 
-  tarjeta_ref Tarjetas?          @relation(fields: [tarjeta], references: [id])
-  owner       Users?             @relation(fields: [owner_user_id], references: [id])
-  plastico    TarjetaPlasticos?  @relation(fields: [plastico_id], references: [id])
+  tarjeta_ref Tarjetas?         @relation(fields: [tarjeta], references: [id])
+  owner       Users?            @relation(fields: [owner_user_id], references: [id])
+  plastico    TarjetaPlasticos? @relation(fields: [plastico_id], references: [id])
 
   cuotas           CuotasDetalle[]
   responsables     ResponsablesComprasCredito[]
@@ -241,8 +250,14 @@ model CuentasFinancieras {
   created_at        DateTime? @default(now()) @db.Timestamptz(6)
   /// Cuenta que recibe los avisos del banco que no traen número (p. ej. la nómina). Una por usuario (sql/003).
   es_principal      Boolean   @default(false)
+  /// Cuenta «sin número» que recibe los avisos del banco que no traen cuenta (sql/006).
+  es_generica       Boolean   @default(false)
+  /// Periodo en que se ha usado la cuenta (para la línea de tiempo); NULL = sin cierre.
+  fecha_inicio_uso  DateTime? @db.Date
+  fecha_fin_uso     DateTime? @db.Date
 
-  owner Users @relation(fields: [owner_user_id], references: [id])
+  owner    Users      @relation(fields: [owner_user_id], references: [id])
+  tarjetas Tarjetas[] @relation("TarjetaCuenta")
 
   transacciones_origen  Transacciones[]         @relation("TxCuentaOrigen")
   transacciones_destino Transacciones[]         @relation("TxCuentaDestino")

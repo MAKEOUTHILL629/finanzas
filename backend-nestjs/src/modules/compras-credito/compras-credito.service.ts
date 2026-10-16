@@ -115,9 +115,10 @@ export class ComprasCreditoService {
 
     const tarjeta = await tx.tarjetas.findFirst({
       where: { id: BigInt(input.tarjeta), owner_user_id: ownerUserId },
-      select: { id: true, dia_corte: true },
+      select: { id: true, dia_corte: true, tipo_tarjeta: true },
     });
     if (!tarjeta) throw new Error(`No se encontró la tarjeta con ID ${input.tarjeta}`);
+    if (tarjeta.tipo_tarjeta === 'DEBITO') throw datosInvalidos({ tarjeta: ['Las compras a crédito solo se registran en tarjetas de crédito'] });
 
     const amortizacion = calcularAmortizacion(
       valores.valorCompra,
@@ -186,9 +187,10 @@ export class ComprasCreditoService {
 
       const tarjeta = await tx.tarjetas.findFirst({
         where: { id: BigInt(input.tarjeta), owner_user_id: ownerUserId },
-        select: { id: true },
+        select: { id: true, tipo_tarjeta: true },
       });
       if (!tarjeta) throw new Error(`No se encontró la tarjeta con ID ${input.tarjeta}`);
+      if (tarjeta.tipo_tarjeta === 'DEBITO') throw datosInvalidos({ tarjeta: ['Las compras a crédito solo se registran en tarjetas de crédito'] });
 
       // El plástico solo cambia si el usuario lo eligió o si la compra se pasó a otra tarjeta; si no, se conserva (puede ser NULL).
       const cambiaPlastico = (input.plasticoId !== undefined && input.plasticoId !== null) || existente.tarjeta !== tarjeta.id;

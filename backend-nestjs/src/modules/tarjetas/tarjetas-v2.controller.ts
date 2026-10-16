@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiExcludeEndpoint, ApiOperation, ApiQuery, ApiTags } fr
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { ActualizarTarjetaDto } from './dto/actualizar-tarjeta.dto';
+import { CrearTarjetaDto } from './dto/crear-tarjeta.dto';
 import { PagarExtractoDto } from './dto/pagar-extracto.dto';
 import { TarjetasService } from './tarjetas.service';
 
@@ -18,6 +19,12 @@ export class TarjetasV2Controller {
   resumenMensual(@Query('periodo') periodo: string | undefined, @CurrentUser('userId') userId: bigint) {
     if (!periodo) throw datosInvalidos({ periodo: ['periodo es obligatorio (YYYY-MM)'] });
     return this.tarjetas.resumenMensual(periodo, userId);
+  }
+
+  @Post()
+  @ApiOperation({ summary: 'Crea una tarjeta (crédito o débito) con su plástico, o un plástico que renueva a otro; sin límite por cuenta ni franquicia' })
+  crear(@Body() dto: CrearTarjetaDto, @CurrentUser('userId') userId: bigint) {
+    return this.tarjetas.crear(dto, userId);
   }
 
   @Put(':id')

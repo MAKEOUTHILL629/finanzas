@@ -194,6 +194,14 @@ describe('ComprasCreditoService.save', () => {
     expect(cuotas[0].periodo_facturacion).toBe('2024-01');
   });
 
+  it('una tarjeta de débito no admite compras a crédito (400) y no se guarda nada', async () => {
+    const { prisma, service } = setup();
+    prisma.tarjetas.findFirst.mockResolvedValue({ id: 3n, dia_corte: null, tipo_tarjeta: 'DEBITO' });
+    await expect(service.save(input, OWNER)).rejects.toMatchObject({ status: 400 });
+    expect(prisma.comprasCredito.create).not.toHaveBeenCalled();
+    expect(prisma.cuotasDetalle.createMany).not.toHaveBeenCalled();
+  });
+
   it('no inserta responsables ni asientos del sub-ledger (los crea el endpoint de responsables + Trigger 6)', async () => {
     const { prisma, service } = setup();
     mockCreate(prisma);

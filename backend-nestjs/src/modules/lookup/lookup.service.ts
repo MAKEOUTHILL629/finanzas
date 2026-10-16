@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { idNum, numOrNull } from '../../common/utils/legacy-format.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EstadoPlastico, TipoTarjeta, estadosDePlasticos } from '../tarjetas/tipos-tarjeta.util';
 
 export const TIPOS_CATALOGO = ['personas', 'tarjetas', 'cuentas', 'categorias'] as const;
 export type TipoCatalogo = (typeof TIPOS_CATALOGO)[number];
@@ -24,10 +25,20 @@ export interface ItemPlasticoLookup {
   esActivo: boolean;
   vigenteDesde: string | null;
   vigenteHasta: string | null;
+  /** ACTIVA · REEMPLAZADA · INACTIVA: sirve para agrupar «Activas» / «Históricas» en los selectores. */
+  estado: EstadoPlastico;
 }
 
 export interface ItemTarjeta {
   id: number;
+  /** CREDITO | DEBITO. Las compras a crédito, extractos y cupos solo admiten las de crédito. */
+  tipo: TipoTarjeta;
+  /** Cuenta a la que pertenece (obligatoria en débito). */
+  cuentaId: number | null;
+  /** Nombre corto («Débito *3698»). */
+  alias: string | null;
+  /** Producto «sin número» (recibe lo que el banco avisa sin los últimos 4). */
+  esGenerica: boolean;
   /** «American Express · Green»: nunca vacío («Tarjeta #3» si no tiene nombre). */
   nombre: string;
   franquicia: string | null;
@@ -54,6 +65,8 @@ export interface ItemCuenta {
   saldoActual: number;
   activa: boolean;
   esPrincipal: boolean;
+  /** Cuenta «sin número» que agrupa los avisos del banco que no traen cuenta. */
+  esGenerica: boolean;
 }
 
 export interface ItemCategoria {
@@ -132,6 +145,10 @@ export class LookupService {
         dia_limite_pago: true,
         cupo_total: true,
         permite_dolares: true,
+        tipo_tarjeta: true,
+        cuenta_id: true,
+        alias: true,
+        es_generica: true,
         plasticos: { select: { id: true, ultimos_4: true, es_activo: true, vigente_desde: true, vigente_hasta: true }, orderBy: { id: 'desc' } },
       },
       orderBy: { id: 'asc' },
@@ -140,14 +157,28 @@ export class LookupService {
       const plasticos = [...t.plasticos].sort((a, b) => Number(b.es_activo) - Number(a.es_activo) || Number(b.id - a.id));
       const activo = plasticos.find((p) => p.es_activo)?.ultimos_4 ?? null;
       const nombre = [t.franquicia, t.descripcion].filter(Boolean).join(' · ') || `Tarjeta #${t.id}`;
+      const estados = estadosDePlasticos(
+        plasticos.map((p) => ({ id: idNum(p.id), esActivo: p.es_activo, vigenteDesde: dia(p.vigente_desde), vigenteHasta: dia(p.vigente_hasta) })),
+      );
       return {
         id: idNum(t.id),
+        tipo: t.tipo_tarjeta as TipoTarjeta,
+        cuentaId: t.cuenta_id === null ? null : idNum(t.cuenta_id),
+        alias: t.alias,
+        esGenerica: t.es_generica,
         nombre,
         franquicia: t.franquicia,
         descripcion: t.descripcion,
         ultimos4Activo: activo,
-        etiqueta: `${t.franquicia || nombre}${activo ? ` ··${activo}` : ''}`,
-        plasticos: plasticos.map((p) => ({ id: idNum(p.id), ultimos4: p.ultimos_4, esActivo: p.es_activo, vigenteDesde: dia(p.vigente_desde), vigenteHasta: dia(p.vigente_hasta) })),
+        etiqueta: `${(t.es_generica ? t.alias : null) || t.franquicia || nombre}${activo ? ` ··${activo}` : ''}`,
+        plasticos: plasticos.map((p) => ({
+          id: idNum(p.id),
+          ultimos4: p.ultimos_4,
+          esActivo: p.es_activo,
+          vigenteDesde: dia(p.vigente_desde),
+          vigenteHasta: dia(p.vigente_hasta),
+          estado: estados.get(idNum(p.id)) ?? 'INACTIVA',
+        })),
         tasaInteresCompra: numOrNull(t.tasa_interes_compra),
         diaCorte: t.dia_corte,
         diaLimitePago: t.dia_limite_pago,
@@ -160,7 +191,7 @@ export class LookupService {
   async cuentas(ownerUserId: bigint): Promise<ItemCuenta[]> {
     const filas = await this.prisma.cuentasFinancieras.findMany({
       where: { owner_user_id: ownerUserId },
-      select: { id: true, nombre: true, tipo_cuenta: true, banco_entidad: true, ultimos_4_digitos: true, moneda: true, saldo_actual: true, is_active: true, es_principal: true },
+      select: { id: true, nombre: true, tipo_cuenta: true, banco_entidad: true, ultimos_4_digitos: true, moneda: true, saldo_actual: true, is_active: true, es_principal: true, es_generica: true },
       orderBy: { id: 'asc' },
     });
     return filas.map((c) => ({
@@ -173,6 +204,7 @@ export class LookupService {
       saldoActual: numOrNull(c.saldo_actual) ?? 0,
       activa: c.is_active !== false,
       esPrincipal: c.es_principal === true,
+      esGenerica: c.es_generica === true,
     }));
   }
 

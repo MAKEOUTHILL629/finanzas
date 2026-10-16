@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Po
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { datosInvalidos, parseIntStrict } from '../../common/utils/legacy-http.util';
-import { ActualizarPlasticoDto, ReemplazarPlasticoDto } from './dto/plasticos.dto';
+import { ActualizarPlasticoDto, AgregarPlasticoDto, ReemplazarPlasticoDto } from './dto/plasticos.dto';
 import { PlasticosTarjetaService } from './plasticos-tarjeta.service';
 
 /** Plásticos (renovaciones/reposiciones) de una tarjeta de crédito e historial unificado de sus compras. */
@@ -16,6 +16,12 @@ export class PlasticosController {
   @ApiOperation({ summary: 'Plásticos de la tarjeta (el activo primero)' })
   listar(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
     return this.plasticos.listar(id, userId);
+  }
+
+  @Post('plasticos')
+  @ApiOperation({ summary: 'Agrega un plástico histórico (o el primero de la línea) sin cambiar el activo; el historial de compras queda intacto' })
+  agregar(@Param('id', ParseIntPipe) id: number, @Body() dto: AgregarPlasticoDto, @CurrentUser('userId') userId: bigint) {
+    return this.plasticos.agregarHistorico(id, dto, userId);
   }
 
   @Post('plasticos/reemplazar')
