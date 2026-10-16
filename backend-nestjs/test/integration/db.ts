@@ -21,6 +21,8 @@ import { EjecutorCorreosService } from '../../src/modules/notificaciones-correo/
 import { ProductosCorreoService } from '../../src/modules/notificaciones-correo/productos-correo.service';
 import { ReprocesoCorreosService } from '../../src/modules/notificaciones-correo/reproceso-correos.service';
 import { SyncBatchService } from '../../src/modules/notificaciones-correo/sync-batch.service';
+import { EstadoCuentaPersonasService } from '../../src/modules/estado-cuenta-personas/estado-cuenta-personas.service';
+import { CuotasTercerosService } from '../../src/modules/liquidacion-mensual/cuotas-terceros.service';
 import { LiquidacionMensualService } from '../../src/modules/liquidacion-mensual/liquidacion-mensual.service';
 import { AportesCarroService } from '../../src/modules/obligaciones-aportes/aportes-carro.service';
 import { ObligacionesAportesService } from '../../src/modules/obligaciones-aportes/obligaciones-aportes.service';
@@ -157,6 +159,7 @@ export interface Servicios {
   aportesCarro: AportesCarroService;
   recurrentesPersona: RecurrentesPersonaService;
   liquidacion: LiquidacionMensualService;
+  estadoCuentaPersonas: EstadoCuentaPersonasService;
   cortes: CortesCobroService;
   prestamos: PrestamosService;
   subledger: SubledgerDeudasService;
@@ -181,7 +184,8 @@ export async function crearServicios(): Promise<Servicios> {
   const subledger = new SubledgerDeudasService(prisma);
   const recurrentesPersona = new RecurrentesPersonaService(prisma);
   const productosCorreo = new ProductosCorreoService(prisma);
-  const liquidacion = new LiquidacionMensualService(prisma, recurrentesPersona, subledger);
+  const cuotasTerceros = new CuotasTercerosService(prisma);
+  const liquidacion = new LiquidacionMensualService(prisma, recurrentesPersona, subledger, cuotasTerceros);
   const enlacesCobro = new EnlacesCobroService(prisma, liquidacion);
   const ejecutorCorreos = new EjecutorCorreosService(prisma, compras, transacciones, responsables, config);
   return {
@@ -203,6 +207,7 @@ export async function crearServicios(): Promise<Servicios> {
     aportesCarro: new AportesCarroService(prisma, transacciones),
     recurrentesPersona,
     liquidacion,
+    estadoCuentaPersonas: new EstadoCuentaPersonasService(prisma, liquidacion, cuotasTerceros),
     cortes: new CortesCobroService(prisma, prestamos),
     prestamos,
     subledger,

@@ -12,6 +12,7 @@ import { calcularEstadoPeriodo } from '../obligaciones-aportes/aportes-carro.cal
 import { RecurrentesPersonaService } from '../recurrentes-persona/recurrentes-persona.service';
 import { SubledgerDeudasService } from '../subledger-deudas/subledger-deudas.service';
 import { CruceEntrePersonasDto, RegistrarPagoMesDto } from './dto/liquidacion.dto';
+import { CuotasTercerosService, CuotaTercero, estadoDeCuota } from './cuotas-terceros.service';
 
 export type OrigenMovimiento =
   | 'COMPRA_CREDITO'
@@ -121,6 +122,7 @@ export class LiquidacionMensualService {
     private readonly prisma: PrismaService,
     private readonly recurrentes: RecurrentesPersonaService,
     private readonly subledger: SubledgerDeudasService,
+    private readonly cuotasTerceros: CuotasTercerosService,
   ) {}
 
   async liquidacion(periodo: string, ownerUserId: bigint, opciones: { personaId?: number; todas?: boolean } = {}) {
@@ -130,7 +132,7 @@ export class LiquidacionMensualService {
     const filtroPersona = opciones.personaId !== undefined ? { persona_id: BigInt(opciones.personaId) } : {};
     const vigente = { OR: [{ estado: null }, { estado: { not: EstadoMovimientoDeuda.ANULADO } }] };
 
-    const [personas, movimientos, previos, obligaciones] = await Promise.all([
+    const [personas, movimientos, previos, obligaciones, cuotas] = await Promise.all([
       this.prisma.personas.findMany({
         where: { owner_user_id: ownerUserId, ...(opciones.personaId !== undefined ? { id: BigInt(opciones.personaId) } : {}) },
         select: PERSONA_SELECT,
@@ -151,12 +153,19 @@ export class LiquidacionMensualService {
         include: { dias: { select: { detalles: { select: { valor: true } } } } },
         orderBy: { id: 'asc' },
       }),
+      this.cuotasTerceros.listar(ownerUserId, { personaId: opciones.personaId }),
     ]);
 
     if (opciones.personaId !== undefined && personas.length === 0) throw new NotFoundException(`Persona ${opciones.personaId} no encontrada`);
 
     const movsPorPersona = new Map<bigint, Movimiento[]>();
     for (const m of movimientos) movsPorPersona.set(m.persona_id, [...(movsPorPersona.get(m.persona_id) ?? []), m]);
+
+    // Cuotas de tarjeta del mes que aún no tienen su asiento en el sub-ledger (compras anteriores a los triggers): se cuentan igual.
+    const virtualesPorPersona = new Map<bigint, CuotaTercero[]>();
+    for (const c of cuotas) {
+      if (c.periodo === periodo && c.movimientoId === null) virtualesPorPersona.set(c.personaId, [...(virtualesPorPersona.get(c.personaId) ?? []), c]);
+    }
 
     const saldoAnterior = new Map<bigint, Decimal>();
     for (const g of previos) {
@@ -170,7 +179,7 @@ export class LiquidacionMensualService {
     }
 
     const resultado = personas
-      .map((p) => this.liquidarPersona(p, movsPorPersona.get(p.id) ?? [], obligacionesPorPersona.get(p.id) ?? [], saldoAnterior.get(p.id) ?? new Decimal(0)))
+      .map((p) => this.liquidarPersona(p, movsPorPersona.get(p.id) ?? [], obligacionesPorPersona.get(p.id) ?? [], saldoAnterior.get(p.id) ?? new Decimal(0), virtualesPorPersona.get(p.id) ?? []))
       .filter((l) => opciones.todas || opciones.personaId !== undefined || l.tieneActividad)
       .sort((a, b) => b.resumenNeto.saldoNetoFinal.comparedTo(a.resumenNeto.saldoNetoFinal));
 
@@ -261,11 +270,14 @@ export class LiquidacionMensualService {
     movimientos: Movimiento[],
     obligaciones: Array<ReturnType<LiquidacionMensualService['vistaObligacion']>>,
     saldoAnterior: Decimal,
+    cuotasSinAsiento: CuotaTercero[] = [],
   ) {
     const grupos = Object.fromEntries(CATEGORIAS.map((c) => [c, [] as ReturnType<LiquidacionMensualService['vistaItem']>[]])) as Record<Categoria, ReturnType<LiquidacionMensualService['vistaItem']>[]>;
     for (const m of movimientos) grupos[categoriaDeMovimiento(m.tipo_movimiento, m.signo)].push(this.vistaItem(m));
+    for (const c of cuotasSinAsiento) grupos.cuotasTarjetas.push(this.vistaCuotaSinAsiento(c));
+    grupos.cuotasTarjetas.sort((a, b) => a.fecha.getTime() - b.fecha.getTime() || a.id - b.id);
 
-    const items = movimientos.map((m) => this.vistaItem(m));
+    const items = CATEGORIAS.flatMap((c) => grupos[c]);
     const cargosLedger = money(items.filter((i) => i.signo > 0).reduce((acc, i) => acc.plus(i.monto), new Decimal(0)));
     const abonosLedger = money(items.filter((i) => i.signo < 0).reduce((acc, i) => acc.plus(i.monto), new Decimal(0)));
     const faltante = money(obligaciones.reduce((acc, o) => acc.plus(o.saldoPendiente), new Decimal(0)));
@@ -292,14 +304,53 @@ export class LiquidacionMensualService {
       resumenNeto: { totalCargos, totalAbonosYFavor, saldoNetoFinal, estado },
       saldoAnterior: money(saldoAnterior),
       saldoTotalAcumulado: money(saldoAnterior.plus(saldoNetoFinal)),
-      tieneActividad: movimientos.length > 0 || !saldoAnterior.isZero() || faltante.greaterThan(0) || obligaciones.length > 0,
+      tieneActividad: items.length > 0 || !saldoAnterior.isZero() || faltante.greaterThan(0) || obligaciones.length > 0,
+    };
+  }
+
+  /**
+   * Cuota de una compra con tarjeta que le toca a la persona pero aún no tiene asiento en el sub-ledger (compra anterior a los
+   * triggers). Misma forma que un asiento real; `virtual: true` y `id` negativo (`-cuota_detalle_id`) para no chocar con ids reales.
+   */
+  private vistaCuotaSinAsiento(c: CuotaTercero) {
+    const tarjeta = c.tarjeta;
+    return {
+      id: -Number(c.cuotaId),
+      fecha: c.fechaPago,
+      concepto: `Cuota ${c.numeroCuota}/${c.numeroCuotasCompra} - ${c.concepto ?? 'Compra TC'}`,
+      comentario: null as string | null,
+      tipoMovimiento: TipoMovimientoDeuda.CARGO_CUOTA_TC as string,
+      origen: 'COMPRA_CREDITO' as OrigenMovimiento,
+      signo: 1,
+      monto: c.monto,
+      impacto: c.monto,
+      estado: estadoDeCuota(c.numeroCuota, c.periodo) as string | null,
+      prestamoId: null as bigint | null,
+      cruceDeudaId: null as bigint | null,
+      cargoRecurrentePersonaId: null as bigint | null,
+      obligacionMesId: null as bigint | null,
+      cuotaDetalleId: c.cuotaId as bigint | null,
+      cobroPuntualId: null as bigint | null,
+      virtual: true,
+      detalle: {
+        tipo: 'CUOTA_TARJETA' as const,
+        compra: c.concepto,
+        fechaCompra: c.fechaCompra,
+        valorCompra: c.valorCompra as Decimal | null,
+        numeroCuota: c.numeroCuota as number | null,
+        cuotasDeLaCompra: c.numeroCuotasCompra as number | null,
+        cuotasQueTePertenecen: c.cuotasDeLaPersona ?? c.numeroCuotasCompra,
+        porcentaje: c.porcentaje as Decimal | null,
+        valorCuotaTotal: c.pagoTotal as Decimal | null,
+        tarjeta,
+      },
     };
   }
 
   private vistaItem(m: Movimiento) {
     const monto = money(toDecimal(m.monto));
     return {
-      id: m.id,
+      id: Number(m.id),
       fecha: m.fecha_movimiento,
       concepto: m.concepto,
       comentario: m.prestamo?.comentarios ?? null,

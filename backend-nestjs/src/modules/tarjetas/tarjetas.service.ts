@@ -22,6 +22,9 @@ interface ResumenScraping {
   resultado?: ResultadoScrapingTarjeta;
 }
 
+/** Persona «yo» del AppSheet original (la misma que usan los triggers del sub-ledger). */
+const LEGACY_YO = 'lm1R40P16oHgkM3Szu91du';
+
 const num = (d: Decimal | null): number | null => (d ? d.toNumber() : null);
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -292,24 +295,20 @@ export class TarjetasService {
   /**
    * `GET /api/v2/tarjetas/resumen-mensual?periodo=YYYY-MM` — consulta 7.3 (lo tuyo vs. lo de terceros + USD).
    *
-   * Corrige dos defectos de la versión del documento (detectados contra PostgreSQL real):
+   * Corrige tres defectos de la versión del documento (detectados contra PostgreSQL real):
    *  1. El `LEFT JOIN` directo a `ResponsablesComprasCredito` multiplicaba las cuotas cuando una compra tenía más de un
-   *     tercero (`SUM(pago_total)` salía duplicado). Ahora el % de terceros se agrega por compra ANTES de unir.
+   *     tercero (`SUM(pago_total)` salía duplicado). Ahora el % de terceros se agrega por cuota (subconsulta lateral) y no se une fila a fila.
    *  2. `rcc.persona <> (SELECT ...)` es NULL si el usuario no tiene Persona enlazada, y entonces nadie contaba como
    *     tercero. Se usa `IS DISTINCT FROM`.
+   *  3. Un responsable con `cantidad_cuotas` = N solo paga las N primeras cuotas: el % se aplica cuota a cuota, no a toda la compra.
+   *
+   * Cada fila trae además `terceros`: cuánto le toca a cada persona de ese extracto (para mostrar «de esto, X es de Andrés»).
    */
   async resumenMensual(periodo: string, ownerUserId: bigint) {
     if (!isValidPeriodo(periodo)) throw datosInvalidos({ periodo: ['periodo debe tener formato YYYY-MM'] });
-    return this.prisma.$queryRaw<ResumenMensualTarjetaRow[]>`
+    const filas = await this.prisma.$queryRaw<Array<Omit<ResumenMensualTarjetaRow, 'terceros'>>>`
       WITH mi_persona AS (
-        SELECT id FROM "Personas" WHERE linked_user_id = ${ownerUserId}::int8 ORDER BY id LIMIT 1
-      ),
-      terceros AS (
-        SELECT rcc.compra_credito AS compra_id, SUM(rcc.porcentaje_pago) AS pct_terceros
-        FROM "ResponsablesComprasCredito" rcc
-        WHERE rcc.persona IS NOT NULL
-          AND rcc.persona IS DISTINCT FROM (SELECT id FROM mi_persona)
-        GROUP BY rcc.compra_credito
+        SELECT id FROM "Personas" WHERE linked_user_id = ${ownerUserId}::int8 OR legacy_appsheet_id = ${LEGACY_YO} ORDER BY id LIMIT 1
       )
       SELECT
         t.id AS tarjeta_id,
@@ -322,15 +321,47 @@ export class TarjetasService {
         SUM(cd.pago_total)::numeric(15,2) AS total_extracto_cop,
         SUM(CASE WHEN cc.moneda_original = 'USD' THEN (cd.pago_total / NULLIF(cc.tasa_cambio_aplicada, 0)) ELSE 0 END)::numeric(15,2) AS componente_en_usd,
         BOOL_AND(COALESCE(cc.trm_confirmada, true)) AS todas_trm_confirmadas,
-        COALESCE(SUM(cd.pago_total * (COALESCE(tr.pct_terceros, 0) / 100.0)), 0)::numeric(15,2) AS total_responsabilidad_terceros,
-        (SUM(cd.pago_total) - COALESCE(SUM(cd.pago_total * (COALESCE(tr.pct_terceros, 0) / 100.0)), 0))::numeric(15,2) AS total_propio
+        COALESCE(SUM(cd.pago_total * (tr.pct_terceros / 100.0)), 0)::numeric(15,2) AS total_responsabilidad_terceros,
+        (SUM(cd.pago_total) - COALESCE(SUM(cd.pago_total * (tr.pct_terceros / 100.0)), 0))::numeric(15,2) AS total_propio
       FROM "Tarjetas" t
       JOIN "ComprasCredito" cc ON cc.tarjeta = t.id
       JOIN "CuotasDetalle" cd ON cd.compra = cc.id
-      LEFT JOIN terceros tr ON tr.compra_id = cc.id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(SUM(rcc.porcentaje_pago), 0) AS pct_terceros
+        FROM "ResponsablesComprasCredito" rcc
+        WHERE rcc.compra_credito = cc.id
+          AND rcc.persona IS NOT NULL
+          AND rcc.persona IS DISTINCT FROM (SELECT id FROM mi_persona)
+          AND (rcc.cantidad_cuotas IS NULL OR cd.numero_cuota <= rcc.cantidad_cuotas)
+      ) tr ON true
       WHERE t.owner_user_id = ${ownerUserId}::int8
         AND cd.periodo_facturacion = ${periodo}::char(7)
       GROUP BY t.id, t.franquicia, t.descripcion, t.dia_corte, t.dia_limite_pago, cd.periodo_facturacion`;
+
+    const porPersona = await this.prisma.$queryRaw<Array<{ tarjeta_id: bigint; persona_id: bigint; nombre: string | null; monto: Prisma.Decimal }>>`
+      WITH mi_persona AS (
+        SELECT id FROM "Personas" WHERE linked_user_id = ${ownerUserId}::int8 OR legacy_appsheet_id = ${LEGACY_YO} ORDER BY id LIMIT 1
+      )
+      SELECT cc.tarjeta AS tarjeta_id, p.id AS persona_id, p.nombre,
+             SUM(ROUND((cd.pago_total * (rcc.porcentaje_pago / 100.0))::numeric, 2))::numeric(15,2) AS monto
+      FROM "ComprasCredito" cc
+      JOIN "CuotasDetalle" cd ON cd.compra = cc.id
+      JOIN "ResponsablesComprasCredito" rcc ON rcc.compra_credito = cc.id
+        AND (rcc.cantidad_cuotas IS NULL OR cd.numero_cuota <= rcc.cantidad_cuotas)
+      JOIN "Personas" p ON p.id = rcc.persona
+      WHERE cc.owner_user_id = ${ownerUserId}::int8
+        AND cd.periodo_facturacion = ${periodo}::char(7)
+        AND rcc.persona IS DISTINCT FROM (SELECT id FROM mi_persona)
+      GROUP BY cc.tarjeta, p.id, p.nombre
+      HAVING SUM(ROUND((cd.pago_total * (rcc.porcentaje_pago / 100.0))::numeric, 2)) > 0
+      ORDER BY monto DESC, p.nombre`;
+
+    return filas.map((f) => ({
+      ...f,
+      terceros: porPersona
+        .filter((r) => r.tarjeta_id === f.tarjeta_id)
+        .map((r) => ({ personaId: r.persona_id, nombre: r.nombre, monto: r.monto })),
+    }));
   }
 
   // ───────────────────────────── helpers ─────────────────────────────
@@ -392,4 +423,6 @@ export interface ResumenMensualTarjetaRow {
   todas_trm_confirmadas: boolean;
   total_responsabilidad_terceros: Prisma.Decimal;
   total_propio: Prisma.Decimal;
+  /** Cuánto le toca a cada tercero de este extracto (ya está incluido en `total_responsabilidad_terceros`). */
+  terceros: Array<{ personaId: bigint; nombre: string | null; monto: Prisma.Decimal }>;
 }

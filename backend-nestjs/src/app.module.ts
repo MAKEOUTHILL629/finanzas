@@ -13,6 +13,7 @@ import { ConsultasPagosModule } from './modules/consultas-pagos/consultas-pagos.
 import { CuentasFinancierasModule } from './modules/cuentas-financieras/cuentas-financieras.module';
 import { GastosRecurrentesModule } from './modules/gastos-recurrentes/gastos-recurrentes.module';
 import { NotificacionesCorreoModule } from './modules/notificaciones-correo/notificaciones-correo.module';
+import { EstadoCuentaPersonasModule } from './modules/estado-cuenta-personas/estado-cuenta-personas.module';
 import { LiquidacionMensualModule } from './modules/liquidacion-mensual/liquidacion-mensual.module';
 import { ObligacionesAportesModule } from './modules/obligaciones-aportes/obligaciones-aportes.module';
 import { RecurrentesPersonaModule } from './modules/recurrentes-persona/recurrentes-persona.module';
@@ -55,6 +56,7 @@ function flattenValidationErrors(errors: ValidationError[], prefix = ''): Record
     ObligacionesAportesModule,
     RecurrentesPersonaModule,
     LiquidacionMensualModule,
+    EstadoCuentaPersonasModule,
     CobrosModule,
     SubledgerDeudasModule,
   ],

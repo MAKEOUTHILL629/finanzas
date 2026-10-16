@@ -212,6 +212,32 @@ describeDb('Integración BD — stored procedures y consultas', () => {
       expect(Number(fila.total_cuotas_mes)).toBe(1);
     });
 
+    it('7.3 por tercero: respeta cuántas cuotas le tocan a cada responsable y detalla cuánto es de cada uno', async () => {
+      const id = await s.compras.save(
+        { concepto: 'Nevera', valorCompra: 1200000, fechaCompra: `${mes}-10`, numeroCuotas: 12, interes: 0, descripcion: 'd', estado: 'Pendiente', tarjeta: semilla.tarjetaId },
+        semilla.userId,
+      );
+      // Andrés 50 % pero solo las 3 primeras cuotas; Papá 20 % las 12; el propietario 30 %
+      await s.responsables.create({ persona: semilla.andresId, porcentajePago: 50, cantidadPago: 600000, cantidadCuotas: 3, compraCredito: id }, semilla.userId);
+      await s.responsables.create({ persona: semilla.papaId, porcentajePago: 20, cantidadPago: 240000, cantidadCuotas: 12, compraCredito: id }, semilla.userId);
+      await s.responsables.create({ persona: semilla.yoId, porcentajePago: 30, cantidadPago: 360000, cantidadCuotas: 12, compraCredito: id }, semilla.userId);
+
+      const [cuota1] = await s.tarjetas.resumenMensual(mes, semilla.userId);
+      expect(cuota1.total_extracto_cop.toString()).toBe('100000');
+      expect(cuota1.total_responsabilidad_terceros.toString()).toBe('70000'); // cuota 1: Andrés 50 % + Papá 20 %
+      expect(cuota1.total_propio.toString()).toBe('30000');
+      expect(cuota1.terceros.map((t) => [Number(t.personaId), t.monto.toString()])).toEqual([
+        [semilla.andresId, '50000'],
+        [semilla.papaId, '20000'],
+      ]);
+
+      // 4 meses después Andrés ya terminó sus 3 cuotas: solo queda Papá
+      const [cuota4] = await s.tarjetas.resumenMensual(mesRelativo(3), semilla.userId);
+      expect(cuota4.total_responsabilidad_terceros.toString()).toBe('20000');
+      expect(cuota4.total_propio.toString()).toBe('80000');
+      expect(cuota4.terceros.map((t) => Number(t.personaId))).toEqual([semilla.papaId]);
+    });
+
     it('7.3 con compra en USD: componente_en_usd y TRM sin confirmar', async () => {
       await s.compras.save(
         { concepto: 'Amazon', fechaCompra: `${mes}-05`, numeroCuotas: 1, interes: 0, descripcion: 'd', estado: 'Pendiente', tarjeta: semilla.tarjetaId, monedaOriginal: 'USD', valorMonedaOriginal: 100, tasaCambioAplicada: 4200 },

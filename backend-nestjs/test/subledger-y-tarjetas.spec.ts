@@ -194,7 +194,8 @@ describe('TarjetasService (v2 y legacy)', () => {
     expect(sql).toContain('todas_trm_confirmadas');
     expect(sql).toContain('WHERE t.owner_user_id =');
     expect(sql).toContain('IS DISTINCT FROM'); // terceros aun sin Persona enlazada
-    expect(sql).toContain('GROUP BY rcc.compra_credito'); // % de terceros agregado por compra: sin fan-out del JOIN
+    expect(sql).toContain('LEFT JOIN LATERAL'); // % de terceros agregado por cuota: sin fan-out del JOIN
+    expect(sql).toContain('cantidad_cuotas'); // solo las N primeras cuotas de cada responsable
     await expect(service.resumenMensual('2026/10', OWNER)).rejects.toMatchObject({ status: 400 });
   });
 
