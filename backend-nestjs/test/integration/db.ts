@@ -21,6 +21,8 @@ import { EjecutorCorreosService } from '../../src/modules/notificaciones-correo/
 import { ProductosCorreoService } from '../../src/modules/notificaciones-correo/productos-correo.service';
 import { ReprocesoCorreosService } from '../../src/modules/notificaciones-correo/reproceso-correos.service';
 import { SyncBatchService } from '../../src/modules/notificaciones-correo/sync-batch.service';
+import { DashboardService } from '../../src/modules/dashboard/dashboard.service';
+import { LookupService } from '../../src/modules/lookup/lookup.service';
 import { EstadoCuentaPersonasService } from '../../src/modules/estado-cuenta-personas/estado-cuenta-personas.service';
 import { CuotasTercerosService } from '../../src/modules/liquidacion-mensual/cuotas-terceros.service';
 import { LiquidacionMensualService } from '../../src/modules/liquidacion-mensual/liquidacion-mensual.service';
@@ -160,6 +162,7 @@ export interface Servicios {
   recurrentesPersona: RecurrentesPersonaService;
   liquidacion: LiquidacionMensualService;
   estadoCuentaPersonas: EstadoCuentaPersonasService;
+  dashboard: DashboardService;
   cortes: CortesCobroService;
   prestamos: PrestamosService;
   subledger: SubledgerDeudasService;
@@ -186,6 +189,7 @@ export async function crearServicios(): Promise<Servicios> {
   const productosCorreo = new ProductosCorreoService(prisma);
   const cuotasTerceros = new CuotasTercerosService(prisma);
   const liquidacion = new LiquidacionMensualService(prisma, recurrentesPersona, subledger, cuotasTerceros);
+  const estadoCuentaPersonas = new EstadoCuentaPersonasService(prisma, liquidacion, cuotasTerceros);
   const enlacesCobro = new EnlacesCobroService(prisma, liquidacion);
   const ejecutorCorreos = new EjecutorCorreosService(prisma, compras, transacciones, responsables, config);
   return {
@@ -207,7 +211,8 @@ export async function crearServicios(): Promise<Servicios> {
     aportesCarro: new AportesCarroService(prisma, transacciones),
     recurrentesPersona,
     liquidacion,
-    estadoCuentaPersonas: new EstadoCuentaPersonasService(prisma, liquidacion, cuotasTerceros),
+    estadoCuentaPersonas,
+    dashboard: new DashboardService(prisma, new LookupService(prisma), subledger, estadoCuentaPersonas),
     cortes: new CortesCobroService(prisma, prestamos),
     prestamos,
     subledger,
