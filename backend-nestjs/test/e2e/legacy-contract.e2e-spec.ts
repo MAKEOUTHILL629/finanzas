@@ -237,6 +237,8 @@ describe('Contrato HTTP legacy', () => {
           valorMonedaOriginal: 2500000,
           tasaCambioAplicada: 1,
           trmConfirmada: true,
+          plasticoId: null, // extras de sql/004: Angular los ignora
+          plasticoUltimos4: null,
         },
       ]);
       expect(prisma.comprasCredito.findMany.mock.calls[0][0].where).toEqual({ owner_user_id: 7n });

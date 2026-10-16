@@ -7,6 +7,7 @@ import { money, rate, toDecimal } from '../../common/utils/decimal.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ComprasCreditoService } from '../compras-credito/compras-credito.service';
 import { ResponsablesService } from '../compras-credito/responsables.service';
+import { completarPlasticoDeCompra } from '../tarjetas/plasticos.db';
 import { TransaccionesService } from '../transacciones/transacciones.service';
 import { ItemNormalizado, Plan } from './planificador-correos';
 import { CompraSnap, NotificacionSnap, SnapshotCorreos, TransaccionSnap } from './snapshot-correos';
@@ -254,6 +255,8 @@ export class EjecutorCorreosService {
             descripcion: accion.descripcion,
             estado: 'Pendiente',
             tarjeta: accion.tarjetaId,
+            // El aviso del banco dice con qué plástico se pagó (los 4 dígitos); si no coincide con uno registrado se usa el vigente a la fecha.
+            plasticoUltimos4: plan.analisis.ultimos4,
             ...(usd
               ? { monedaOriginal: 'USD', valorMonedaOriginal: accion.valorOriginal.toString(), tasaCambioAplicada: (accion.tasa as Decimal).toString(), trmConfirmada: false }
               : {}),
@@ -276,6 +279,8 @@ export class EjecutorCorreosService {
         return { compraId: BigInt(compraId), transaccionId: null };
       }
       case 'VINCULAR_COMPRA':
+        // La compra ya existía (sin plástico, si es anterior a sql/004): el aviso aporta con cuál se pagó.
+        await completarPlasticoDeCompra(tx, accion.compraId, plan.analisis.ultimos4);
         return { compraId: accion.compraId, transaccionId: null };
       case 'CREAR_TRANSACCION': {
         const t = await this.transacciones.insertar(tx, accion.datos, ownerUserId, { permitirPagoTarjetaSinTarjeta: accion.permitirPagoTarjetaSinTarjeta });

@@ -22,6 +22,7 @@ export const MODELOS = [
   'users',
   'personas',
   'tarjetas',
+  'tarjetaPlasticos',
   'comprasCredito',
   'cuotasDetalle',
   'responsablesComprasCredito',

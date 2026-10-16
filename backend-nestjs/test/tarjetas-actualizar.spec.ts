@@ -34,7 +34,10 @@ describe('TarjetasService.actualizar (PUT /api/tarjetas/:id)', () => {
   function setup() {
     const prisma = createPrismaMock();
     const config = { get: () => undefined } as unknown as ConfigService;
-    prisma.tarjetas.update.mockImplementation(async ({ data }: any) => tarjeta(data));
+    let ultimo: any = null;
+    prisma.tarjetas.update.mockImplementation(async ({ data }: any) => (ultimo = tarjeta(data)));
+    // Tras guardar, el servicio vuelve a leer la tarjeta con sus plásticos.
+    prisma.tarjetas.findUniqueOrThrow.mockImplementation(async () => ({ ...(ultimo ?? (await prisma.tarjetas.findFirst.mock.results[0].value)), plasticos: [] }));
     return { prisma, service: new TarjetasService(prisma, new WebScrapingService(), config) };
   }
 

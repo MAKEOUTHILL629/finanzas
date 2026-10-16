@@ -175,7 +175,8 @@ describe('ProductosCorreoService — evidencia y asignación', () => {
 
     const aplicado = await service.inferirTarjetas(1n, { aplicar: true });
     expect(aplicado[0].aplicado).toBe(true);
-    expect(prisma.tarjetas.update).toHaveBeenCalledWith({ where: { id: 2n }, data: { ultimos_4_digitos: '1927' } });
+    // Cada grupo de dígitos es un plástico de la tarjeta (sql/004): se registra como tal y la tarjeta queda con su lista al día.
+    expect(prisma.tarjetaPlasticos.create).toHaveBeenCalledWith({ data: expect.objectContaining({ tarjeta_id: 2n, ultimos_4: '1927', es_activo: true }) });
   });
 
   it('asignar: conflicto con 409 si los dígitos ya son de otro producto; exige id o nuevo, no ambos', async () => {

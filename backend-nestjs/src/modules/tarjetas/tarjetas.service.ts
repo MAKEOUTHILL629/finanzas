@@ -1,6 +1,6 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Prisma, Tarjetas } from '@prisma/client';
+import { Prisma, TarjetaPlasticos, Tarjetas } from '@prisma/client';
 import { Decimal } from '../../config/decimal.config';
 import { isValidPeriodo } from '../../common/utils/date.util';
 import { money, rate, toDb, toDbMoney, toDbRate, toDecimal } from '../../common/utils/decimal.util';
@@ -9,6 +9,9 @@ import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActualizarTarjetaDto } from './dto/actualizar-tarjeta.dto';
 import { PagarExtractoDto } from './dto/pagar-extracto.dto';
+import { asegurarPlastico, ocupanteDeUltimos4, sincronizarCadena } from './plasticos.db';
+import { plasticoJson } from './plasticos-tarjeta.service';
+import { tokensUltimos4 } from './plasticos.util';
 import { ResultadoScrapingTarjeta, TarjetaScrapeable, WebScrapingService } from './web-scraping.service';
 
 interface ResumenScraping {
@@ -43,10 +46,14 @@ export class TarjetasService {
 
   // ───────────────────────────── legacy ─────────────────────────────
 
-  /** `GET /api/tarjetas` — JSON de `tarjetaEscritura` (fechas `yyyy-MM-dd'T'HH:mm:ss`). */
+  /**
+   * `GET /api/tarjetas` — JSON de `tarjetaEscritura` (fechas `yyyy-MM-dd'T'HH:mm:ss`) + los plásticos de cada tarjeta:
+   * `plasticoActivo` es el que debe ofrecerse en compras nuevas; `plasticos` trae también los archivados (historial).
+   */
   async list(ownerUserId: bigint) {
     const tarjetas = await this.prisma.tarjetas.findMany({
       where: { owner_user_id: ownerUserId },
+      include: { plasticos: { orderBy: { id: 'asc' } } },
       orderBy: { id: 'asc' },
     });
     return tarjetas.map((t) => this.tarjetaJson(t));
@@ -72,11 +79,40 @@ export class TarjetasService {
     if (dto.cuotaManejo !== undefined) data.cuota_manejo = toDbMoney(toDecimal(dto.cuotaManejo));
     if (dto.urlInfo !== undefined) data.url_info = dto.urlInfo.trim() || null;
     if (dto.extractTasas !== undefined) data.extract_tasas = dto.extractTasas;
-    if (dto.ultimos4Digitos !== undefined) data.ultimos_4_digitos = dto.ultimos4Digitos.trim() || null;
 
-    const guardada =
-      Object.keys(data).length > 0 ? await this.prisma.tarjetas.update({ where: { id: actual.id }, data }) : actual;
+    await this.prisma.$transaction(async (tx) => {
+      if (Object.keys(data).length > 0) await tx.tarjetas.update({ where: { id: actual.id }, data });
+      if (dto.ultimos4Digitos !== undefined) await this.aplicarUltimos4(tx, actual, dto.ultimos4Digitos);
+    });
+    const guardada = await this.prisma.tarjetas.findUniqueOrThrow({ where: { id: actual.id }, include: { plasticos: { orderBy: { id: 'asc' } } } });
     return this.tarjetaJson(guardada);
+  }
+
+  /**
+   * Compatibilidad con la edición clásica de `ultimos4Digitos` ("1927,9587"): cada grupo es un plástico de la tarjeta. Los nuevos se
+   * registran (`asegurarPlastico`); los que se quitan se eliminan solo si no tienen compras asociadas. Después `Tarjetas.ultimos_4_digitos`
+   * vuelve a ser la lista de TODOS los plásticos que quedan.
+   */
+  private async aplicarUltimos4(tx: Prisma.TransactionClient, tarjeta: Tarjetas, texto: string): Promise<void> {
+    const deseados = tokensUltimos4(texto);
+    const actuales = await tx.tarjetaPlasticos.findMany({ where: { tarjeta_id: tarjeta.id }, include: { _count: { select: { compras: true } } } });
+
+    for (const u4 of deseados.filter((d) => !actuales.some((p) => p.ultimos_4 === d))) {
+      if (tarjeta.owner_user_id !== null) {
+        const ocupante = await ocupanteDeUltimos4(tx, tarjeta.owner_user_id, u4, tarjeta.id);
+        if (ocupante) throw new HttpException({ message: `Los dígitos ${u4} ya pertenecen a "${ocupante}"` }, HttpStatus.CONFLICT);
+      }
+      await asegurarPlastico(tx, tarjeta, u4);
+    }
+    const sobrantes = actuales.filter((p) => !deseados.includes(p.ultimos_4) && p._count.compras === 0);
+    // Nunca se deja sin plástico activo a una tarjeta que conserva otros: si se quita el activo, pasa a serlo el más reciente.
+    for (const p of sobrantes) await tx.tarjetaPlasticos.delete({ where: { id: p.id } });
+    const restantes = await tx.tarjetaPlasticos.findMany({ where: { tarjeta_id: tarjeta.id }, orderBy: { id: 'desc' } });
+    if (restantes.length > 0 && !restantes.some((p) => p.es_activo)) {
+      await tx.tarjetaPlasticos.update({ where: { id: restantes[0].id }, data: { es_activo: true, vigente_hasta: null } });
+    }
+    if (restantes.length === 0) await tx.tarjetas.update({ where: { id: tarjeta.id }, data: { ultimos_4_digitos: null } });
+    else await sincronizarCadena(tx, tarjeta.id);
   }
 
   /** `GET /api/tarjetas/balance?mes&year` — saldo restante de cuotas pendientes por tarjeta. */
@@ -299,8 +335,10 @@ export class TarjetasService {
 
   // ───────────────────────────── helpers ─────────────────────────────
 
-  /** JSON de `tarjetaEscritura` (legacy) + los campos del esquema Supabase. */
-  private tarjetaJson(t: Tarjetas) {
+  /** JSON de `tarjetaEscritura` (legacy) + los campos del esquema Supabase + los plásticos. */
+  private tarjetaJson(t: Tarjetas & { plasticos?: TarjetaPlasticos[] }) {
+    const plasticos = (t.plasticos ?? []).map((p) => plasticoJson(p)).sort((a, b) => Number(b.esActivo) - Number(a.esActivo) || b.id - a.id);
+    const activo = plasticos.find((p) => p.esActivo) ?? null;
     return {
       id: idNum(t.id),
       franquicia: t.franquicia,
@@ -317,7 +355,12 @@ export class TarjetasService {
       diaLimitePago: t.dia_limite_pago,
       cupoTotal: numOrNull(t.cupo_total),
       permiteDolares: t.permite_dolares,
+      /** Todos los plásticos (lista separada por comas), el activo primero. */
       ultimos4Digitos: t.ultimos_4_digitos,
+      /** Plástico vigente: el que se ofrece al registrar compras nuevas. */
+      ultimos4Activo: activo?.ultimos4 ?? null,
+      plasticoActivo: activo,
+      plasticos,
     };
   }
 

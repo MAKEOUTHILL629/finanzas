@@ -19,6 +19,10 @@ export interface CompraCreditoInput {
   valorMonedaOriginal?: number | string | null;
   tasaCambioAplicada?: number | string | null;
   trmConfirmada?: boolean | null;
+  /** Plástico con el que se pagó (debe ser de esa tarjeta). Sin él se usa el vigente en la fecha de la compra. */
+  plasticoId?: number | bigint | null;
+  /** Últimos 4 dígitos del aviso del banco: identifica el plástico sin que el llamador conozca su id (correos). */
+  plasticoUltimos4?: string | null;
 }
 
 /** `POST /api/compras-credito` — campos del contrato legacy (+ campos multimoneda opcionales). */
@@ -78,6 +82,12 @@ export class CreateCompraCreditoDto implements CompraCreditoInput {
   @IsOptional()
   @IsBoolean()
   trmConfirmada?: boolean;
+
+  @ApiPropertyOptional({ example: 3, description: 'Plástico con el que se pagó (de esa tarjeta). Si se omite: el vigente en la fecha de la compra.' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  plasticoId?: number;
 }
 
 /** `PUT /api/compras-credito` y `POST /api/recalcular-compra-credito`. */

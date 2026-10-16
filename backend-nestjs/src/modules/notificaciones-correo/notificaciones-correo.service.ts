@@ -405,6 +405,7 @@ export class NotificacionesCorreoService {
         descripcion: `Conciliada desde el correo ${notificacion.external_message_id}`,
         estado: 'Pendiente',
         tarjeta: BigInt(dto.tarjetaId as number),
+        plasticoUltimos4: typeof datos.ultimos_4 === 'string' && /^\d{4}$/.test(datos.ultimos_4) ? datos.ultimos_4 : null,
         ...(usd ? { monedaOriginal: 'USD', valorMonedaOriginal: monto.toString(), tasaCambioAplicada: usd.tasa, trmConfirmada: false } : {}),
       },
       ownerUserId,

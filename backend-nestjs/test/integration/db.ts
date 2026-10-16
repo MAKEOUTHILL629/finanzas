@@ -28,6 +28,7 @@ import { CortesCobroService } from '../../src/modules/prestamos/cortes-cobro.ser
 import { RecurrentesPersonaService } from '../../src/modules/recurrentes-persona/recurrentes-persona.service';
 import { PrestamosService } from '../../src/modules/prestamos/prestamos.service';
 import { SubledgerDeudasService } from '../../src/modules/subledger-deudas/subledger-deudas.service';
+import { PlasticosTarjetaService } from '../../src/modules/tarjetas/plasticos-tarjeta.service';
 import { TarjetasService } from '../../src/modules/tarjetas/tarjetas.service';
 import { WebScrapingService } from '../../src/modules/tarjetas/web-scraping.service';
 import { TransaccionesService } from '../../src/modules/transacciones/transacciones.service';
@@ -84,7 +85,10 @@ const QUITAR_ANTES_DE_MIGRAR = `
     DROP COLUMN IF EXISTS moneda, DROP COLUMN IF EXISTS tarjeta_id, DROP COLUMN IF EXISTS cuenta_id, DROP COLUMN IF EXISTS persona_id,
     DROP COLUMN IF EXISTS vinculo, DROP COLUMN IF EXISTS notificacion_original_id;
   ALTER TABLE "CuentasFinancieras" DROP COLUMN IF EXISTS es_principal;
-  ALTER TABLE "Tarjetas" DROP COLUMN IF EXISTS ultimos_4_digitos;`;
+  ALTER TABLE "Tarjetas" DROP COLUMN IF EXISTS ultimos_4_digitos;
+  -- 004 (plásticos de tarjeta); ComprasCredito.plastico_id apunta a TarjetaPlasticos: primero la columna.
+  ALTER TABLE "ComprasCredito" DROP COLUMN IF EXISTS plastico_id;
+  DROP TABLE IF EXISTS "TarjetaPlasticos" CASCADE;`;
 
 let esquemaListo = false;
 
@@ -157,6 +161,7 @@ export interface Servicios {
   prestamos: PrestamosService;
   subledger: SubledgerDeudasService;
   tarjetas: TarjetasService;
+  plasticos: PlasticosTarjetaService;
   transacciones: TransaccionesService;
   cobrosPuntuales: CobrosPuntualesService;
   enlacesCobro: EnlacesCobroService;
@@ -202,6 +207,7 @@ export async function crearServicios(): Promise<Servicios> {
     prestamos,
     subledger,
     tarjetas: new TarjetasService(prisma, new WebScrapingService(), config),
+    plasticos: new PlasticosTarjetaService(prisma),
     transacciones,
     cobrosPuntuales: new CobrosPuntualesService(prisma),
     enlacesCobro,

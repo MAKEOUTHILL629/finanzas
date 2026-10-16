@@ -40,6 +40,7 @@ model Users {
   personas_owned             Personas[]                 @relation("PersonasOwner")
   personas_linked            Personas[]                 @relation("PersonasLinkedUser")
   tarjetas                   Tarjetas[]
+  tarjeta_plasticos          TarjetaPlasticos[]
   compras_credito            ComprasCredito[]
   cuentas_financieras        CuentasFinancieras[]
   categorias                 Categorias[]
@@ -130,6 +131,32 @@ model Tarjetas {
   transacciones_pagadas Transacciones[]
   plantillas_default    PlantillasRecurrentes[]
   notificaciones        NotificacionesCorreo[]
+  plasticos             TarjetaPlasticos[]
+}
+
+/// Cada plástico (reposición/renovación) de una línea de crédito (`Tarjetas`). Un solo plástico activo por tarjeta (sql/004).
+model TarjetaPlasticos {
+  id               BigInt    @id @default(autoincrement())
+  tarjeta_id       BigInt
+  owner_user_id    BigInt?
+  ultimos_4        String    @db.VarChar(4)
+  es_activo        Boolean   @default(true)
+  vigente_desde    DateTime? @db.Date
+  vigente_hasta    DateTime? @db.Date
+  /// VENCIMIENTO | PERDIDA | ROBO | DETERIORO | FRAUDE | CAMBIO_PRODUCTO | OTRO — por qué se reemplazó el plástico ANTERIOR.
+  motivo_reemplazo String?   @db.VarChar(20)
+  reemplaza_a_id   BigInt?
+  notas            String?
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  tarjeta         Tarjetas          @relation(fields: [tarjeta_id], references: [id], onDelete: Cascade)
+  owner           Users?            @relation(fields: [owner_user_id], references: [id])
+  reemplaza_a     TarjetaPlasticos? @relation("PlasticoReemplazo", fields: [reemplaza_a_id], references: [id])
+  reemplazado_por TarjetaPlasticos[] @relation("PlasticoReemplazo")
+  compras         ComprasCredito[]
+
+  @@unique([tarjeta_id, ultimos_4])
 }
 
 model ComprasCredito {
@@ -150,9 +177,12 @@ model ComprasCredito {
   valor_moneda_original Decimal?  @db.Decimal
   tasa_cambio_aplicada  Decimal?  @db.Decimal
   trm_confirmada        Boolean?
+  /// Plástico con el que se hizo la compra, si se sabe (sql/004). NULL = no registrado (la API lo infiere por fecha).
+  plastico_id           BigInt?
 
-  tarjeta_ref Tarjetas? @relation(fields: [tarjeta], references: [id])
-  owner       Users?    @relation(fields: [owner_user_id], references: [id])
+  tarjeta_ref Tarjetas?          @relation(fields: [tarjeta], references: [id])
+  owner       Users?             @relation(fields: [owner_user_id], references: [id])
+  plastico    TarjetaPlasticos?  @relation(fields: [plastico_id], references: [id])
 
   cuotas           CuotasDetalle[]
   responsables     ResponsablesComprasCredito[]

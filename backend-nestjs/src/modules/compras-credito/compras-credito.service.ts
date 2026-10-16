@@ -11,6 +11,7 @@ import { money, rate, sumDecimals, toDb, toDbMoney, toDbRate, toDecimal } from '
 import { dateToMillis, idNum, num, numOrNull, timestampToDayMillis } from '../../common/utils/legacy-format.util';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { resolverPlasticoCompra } from '../tarjetas/plasticos.db';
 import { CompraCreditoInput } from './dto/compra-credito.dto';
 
 type Tx = Prisma.TransactionClient;
@@ -51,6 +52,9 @@ export interface CompraCreditoJson {
   valorMonedaOriginal: number | null;
   tasaCambioAplicada: number | null;
   trmConfirmada: boolean | null;
+  /** Plástico guardado en la compra (NULL en las anteriores a sql/004: el historial de la tarjeta lo deduce por fecha). */
+  plasticoId: number | null;
+  plasticoUltimos4: string | null;
 }
 
 @Injectable()
@@ -63,7 +67,10 @@ export class ComprasCreditoService {
   async list(ownerUserId: bigint): Promise<CompraCreditoJson[]> {
     const compras = await this.prisma.comprasCredito.findMany({
       where: { owner_user_id: ownerUserId },
-      include: { responsables: { select: { persona: true, porcentaje_pago: true }, orderBy: { id: 'asc' } } },
+      include: {
+        responsables: { select: { persona: true, porcentaje_pago: true }, orderBy: { id: 'asc' } },
+        plastico: { select: { ultimos_4: true } },
+      },
       orderBy: { id: 'asc' },
     });
     return compras.map((c) =>
@@ -74,14 +81,18 @@ export class ComprasCreditoService {
           .filter((p): p is bigint => p !== null)
           .join(','),
         sumDecimals(c.responsables.map((r) => r.porcentaje_pago)).toNumber(),
+        c.plastico?.ultimos_4 ?? null,
       ),
     );
   }
 
   /** `GET /api/compras-credito/detalle/:id` — `null` si no existe (Json.toJson(None)). */
   async getById(id: number, ownerUserId: bigint): Promise<CompraCreditoJson | null> {
-    const compra = await this.prisma.comprasCredito.findFirst({ where: { id: BigInt(id), owner_user_id: ownerUserId } });
-    return compra ? this.toJson(compra, '', 0) : null;
+    const compra = await this.prisma.comprasCredito.findFirst({
+      where: { id: BigInt(id), owner_user_id: ownerUserId },
+      include: { plastico: { select: { ultimos_4: true } } },
+    });
+    return compra ? this.toJson(compra, '', 0, compra.plastico?.ultimos_4 ?? null) : null;
   }
 
   // ───────────────────────────── save ─────────────────────────────
@@ -117,9 +128,15 @@ export class ComprasCreditoService {
       tarjeta.dia_corte,
     );
     const fechaUltimaCuota = amortizacion[amortizacion.length - 1].fechaPago;
+    const plasticoId = await resolverPlasticoCompra(tx, ownerUserId, tarjeta.id, {
+      plasticoId: input.plasticoId,
+      ultimos4: input.plasticoUltimos4,
+      fecha: valores.fechaCompra,
+    });
 
     const compra = await tx.comprasCredito.create({
       data: {
+        plastico_id: plasticoId,
         concepto: input.concepto,
         valor_compra: toDbMoney(valores.valorCompra),
         fecha_compra: valores.fechaCompra,
@@ -173,9 +190,16 @@ export class ComprasCreditoService {
       });
       if (!tarjeta) throw new Error(`No se encontró la tarjeta con ID ${input.tarjeta}`);
 
+      // El plástico solo cambia si el usuario lo eligió o si la compra se pasó a otra tarjeta; si no, se conserva (puede ser NULL).
+      const cambiaPlastico = (input.plasticoId !== undefined && input.plasticoId !== null) || existente.tarjeta !== tarjeta.id;
+      const plasticoId = cambiaPlastico
+        ? await resolverPlasticoCompra(tx, ownerUserId, tarjeta.id, { plasticoId: input.plasticoId, fecha: valores.fechaCompra })
+        : existente.plastico_id;
+
       const actualizada = await tx.comprasCredito.update({
         where: { id: existente.id },
         data: {
+          plastico_id: plasticoId,
           concepto: input.concepto,
           valor_compra: toDbMoney(valores.valorCompra),
           fecha_compra: valores.fechaCompra,
@@ -541,7 +565,7 @@ export class ComprasCreditoService {
     }));
   }
 
-  toJson(c: ComprasCredito, responsables: string, porcentajePago: number): CompraCreditoJson {
+  toJson(c: ComprasCredito, responsables: string, porcentajePago: number, plasticoUltimos4: string | null = null): CompraCreditoJson {
     return {
       id: idNum(c.id),
       fechaCreacion: timestampToDayMillis(c.created_at),
@@ -561,6 +585,8 @@ export class ComprasCreditoService {
       valorMonedaOriginal: numOrNull(c.valor_moneda_original),
       tasaCambioAplicada: numOrNull(c.tasa_cambio_aplicada),
       trmConfirmada: c.trm_confirmada,
+      plasticoId: c.plastico_id === null || c.plastico_id === undefined ? null : idNum(c.plastico_id),
+      plasticoUltimos4,
     };
   }
 }

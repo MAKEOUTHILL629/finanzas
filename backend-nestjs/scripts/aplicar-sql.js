@@ -75,7 +75,8 @@ const CONSULTAS_OBJETOS = {
              JOIN pg_namespace ns ON ns.oid = c.relnamespace WHERE NOT t.tgisinternal AND ns.nspname = 'public' ORDER BY 1`,
   columnas: `SELECT table_name || '.' || column_name AS n FROM information_schema.columns
              WHERE table_schema = 'public' AND table_name IN ('ObligacionesMes','AportesDetalle','MovimientosDeudaPersona','CargosRecurrentesPersona',
-               'Tarjetas','CuentasFinancieras','NotificacionesCorreo','CobrosPuntuales','CobrosPuntualesPersonas','EnlacesCobroPersona','ReportesPagoPersona') ORDER BY 1`,
+               'Tarjetas','CuentasFinancieras','NotificacionesCorreo','CobrosPuntuales','CobrosPuntualesPersonas','EnlacesCobroPersona','ReportesPagoPersona',
+               'ComprasCredito','TarjetaPlasticos') ORDER BY 1`,
   indices: `SELECT indexname AS n FROM pg_indexes WHERE schemaname = 'public' ORDER BY 1`,
 };
 
@@ -84,6 +85,15 @@ async function inventario(client) {
   for (const [clave, sql] of Object.entries(CONSULTAS_OBJETOS)) {
     salida[clave] = new Set((await client.query(sql)).rows.map((r) => r.n));
   }
+  return salida;
+}
+
+/** Tablas con datos del usuario: el DDL no debe cambiar su número de filas (un script que lo haga se cancela). */
+const TABLAS_PROTEGIDAS = ['MovimientosDeudaPersona', 'ComprasCredito', 'CuotasDetalle', 'ResponsablesComprasCredito', 'Tarjetas', 'Prestamos', 'Personas'];
+
+async function conteos(client) {
+  const salida = {};
+  for (const t of TABLAS_PROTEGIDAS) salida[t] = (await client.query(`SELECT count(*)::int AS n FROM "${t}"`)).rows[0].n;
   return salida;
 }
 
@@ -103,7 +113,7 @@ async function main() {
   console.log(`Base: ${info[0].db} · ${String(info[0].v).split(' ').slice(0, 2).join(' ')} · modo: ${dryRun ? 'DRY-RUN (rollback)' : 'APLICAR (commit)'}`);
 
   const antes = await inventario(client);
-  const movimientosAntes = (await client.query('SELECT count(*)::int AS n FROM "MovimientosDeudaPersona"')).rows[0].n;
+  const conteosAntes = await conteos(client);
 
   await client.query('BEGIN');
   try {
@@ -115,7 +125,7 @@ async function main() {
     }
 
     const despues = await inventario(client);
-    const movimientosDespues = (await client.query('SELECT count(*)::int AS n FROM "MovimientosDeudaPersona"')).rows[0].n;
+    const conteosDespues = await conteos(client);
     console.log('\nCambios en el esquema:');
     for (const clave of Object.keys(CONSULTAS_OBJETOS)) {
       const nuevos = [...despues[clave]].filter((n) => !antes[clave].has(n));
@@ -123,8 +133,10 @@ async function main() {
       if (nuevos.length) console.log(`  + ${clave}: ${nuevos.join(', ')}`);
       if (quitados.length) console.log(`  - ${clave}: ${quitados.join(', ')}`);
     }
-    console.log(`\nFilas de MovimientosDeudaPersona: ${movimientosAntes} → ${movimientosDespues} (el DDL no debe cambiarlas)`);
-    if (movimientosAntes !== movimientosDespues) throw new Error('El script modificó datos del sub-ledger: se cancela');
+    console.log('\nFilas de las tablas con datos (el DDL no debe cambiarlas):');
+    for (const t of TABLAS_PROTEGIDAS) console.log(`  ${t}: ${conteosAntes[t]} → ${conteosDespues[t]}`);
+    const alteradas = TABLAS_PROTEGIDAS.filter((t) => conteosAntes[t] !== conteosDespues[t]);
+    if (alteradas.length > 0) throw new Error(`El script modificó el número de filas de ${alteradas.join(', ')}: se cancela`);
 
     if (dryRun) {
       await client.query('ROLLBACK');

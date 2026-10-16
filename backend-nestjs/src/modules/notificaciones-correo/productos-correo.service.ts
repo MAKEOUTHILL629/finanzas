@@ -4,6 +4,7 @@ import { TipoCuentaFinanciera } from '../../common/enums/finance.enums';
 import { toDbMoney, toDecimal } from '../../common/utils/decimal.util';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { asegurarPlastico } from '../tarjetas/plasticos.db';
 import { resolverCuenta, resolverTarjeta, tokensDe4Digitos } from './bancolombia-normalizer.util';
 import { AsignarProductoDto } from './dto/productos-correo.dto';
 
@@ -165,7 +166,8 @@ export class ProductosCorreoService {
       const tarjeta = tarjetas.find((t) => t.id === top.tarjeta_id);
       if (!tarjeta) continue;
       if (opciones.aplicar) {
-        await this.prisma.tarjetas.update({ where: { id: tarjeta.id }, data: { ultimos_4_digitos: agregarUltimos4(tarjeta.ultimos_4_digitos, u4) } });
+        // Cada grupo de dígitos es un plástico de la tarjeta: se registra como tal (y la lista de la tarjeta queda al día).
+        await asegurarPlastico(this.prisma, tarjeta, u4);
         tarjeta.ultimos_4_digitos = agregarUltimos4(tarjeta.ultimos_4_digitos, u4);
       }
       resultado.push({ ultimos4: u4, tarjetaId: Number(tarjeta.id), tarjeta: nombreTarjeta(tarjeta), votos: top.votos, total, aplicado: opciones.aplicar });
@@ -195,12 +197,19 @@ export class ProductosCorreoService {
       if (dto.id !== undefined) {
         const t = tarjetas.find((x) => x.id === BigInt(dto.id as number));
         if (!t) throw new NotFoundException(`Tarjeta ${dto.id} no encontrada`);
-        const g = await this.prisma.tarjetas.update({ where: { id: t.id }, data: { ultimos_4_digitos: agregarUltimos4(t.ultimos_4_digitos, dto.ultimos4) } });
+        const g = await this.prisma.$transaction(async (tx) => {
+          await asegurarPlastico(tx, t, dto.ultimos4);
+          return tx.tarjetas.findUniqueOrThrow({ where: { id: t.id } });
+        });
         return { ultimos4: dto.ultimos4, destino: 'TARJETA' as const, id: Number(g.id), nombre: nombreTarjeta(g), creado: false };
       }
       const n = dto.nuevo as NonNullable<AsignarProductoDto['nuevo']>;
-      const g = await this.prisma.tarjetas.create({
-        data: { owner_user_id: ownerUserId, franquicia: n.franquicia?.trim() || 'Tarjeta de crédito', descripcion: n.descripcion?.trim() || null, ultimos_4_digitos: dto.ultimos4 },
+      const g = await this.prisma.$transaction(async (tx) => {
+        const nueva = await tx.tarjetas.create({
+          data: { owner_user_id: ownerUserId, franquicia: n.franquicia?.trim() || 'Tarjeta de crédito', descripcion: n.descripcion?.trim() || null },
+        });
+        await asegurarPlastico(tx, nueva, dto.ultimos4);
+        return tx.tarjetas.findUniqueOrThrow({ where: { id: nueva.id } });
       });
       return { ultimos4: dto.ultimos4, destino: 'TARJETA' as const, id: Number(g.id), nombre: nombreTarjeta(g), creado: true };
     }
