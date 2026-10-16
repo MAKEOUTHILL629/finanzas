@@ -83,6 +83,16 @@ describeDb('Integración BD — conciliación de correos', () => {
     expect(Number(compra.compra?.valor_compra)).toBe(80000);
   });
 
+  it('la fecha corregida por el usuario es la del movimiento y la de la compra', async () => {
+    const c = await correo({});
+    const r = await s.notificaciones.conciliar(Number(c.id), { cuentaId: semilla.bancolombiaId, fecha: '2026-10-08' } as any, semilla.userId);
+    expect(r.transaccion?.fecha_transaccion.toISOString().slice(0, 10)).toBe('2026-10-08');
+
+    const tc = await correo({ instrumento: 'TC', ruta: 'COMPRA_TC', ultimos_4: '1111', fecha: '2026-10-10' });
+    const compra = await s.notificaciones.conciliar(Number(tc.id), { tarjetaId: semilla.tarjetaId, fecha: '2026-10-07' } as any, semilla.userId);
+    expect(compra.compra?.fecha_compra?.toISOString().slice(0, 10)).toBe('2026-10-07');
+  });
+
   it('el cuerpo con ids vacíos o null se trata como «no enviado» (no es 400 ni crea una compra por error)', async () => {
     const dto = plainToInstance(ConciliarCorreoDto, { accion: 'CONFIRMAR', concepto: '  ', categoriaId: '', cuentaId: '2', tarjetaId: null, numeroCuotas: '', monto: null, notas: '', convertirEnPrestamo: null, responsables: null });
     expect(await validate(dto)).toEqual([]);

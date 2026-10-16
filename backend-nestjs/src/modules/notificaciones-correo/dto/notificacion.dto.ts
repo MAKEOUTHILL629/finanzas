@@ -135,6 +135,15 @@ export class ConciliarCorreoDto {
   monto?: number | string;
 
   @ApiPropertyOptional({
+    example: '2026-10-15',
+    description: 'Fecha real del movimiento (yyyy-MM-dd) cuando el correo la trae mal; solo al crear el movimiento o la compra desde el correo',
+  })
+  @VacioAUndefined()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'fecha debe tener el formato yyyy-MM-dd' })
+  fecha?: string;
+
+  @ApiPropertyOptional({
     example: '4100.50',
     description: 'TRM (COP por unidad) para un correo en dólares que no trae tasa: sin ella no se puede registrar un movimiento en otra moneda',
   })

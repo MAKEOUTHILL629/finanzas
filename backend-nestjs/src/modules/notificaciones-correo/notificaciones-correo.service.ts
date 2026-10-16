@@ -57,6 +57,17 @@ export function interpretarDatosParseados(datos: Record<string, unknown> | null 
   };
 }
 
+/**
+ * Instante del movimiento: el del correo, salvo que el usuario corrija el DÍA. Entonces se conserva la hora del correo si el día
+ * indicado es el mismo (Bogotá, UTC-5) y, si cambia, se usa el mediodía de ese día para que ninguna zona horaria lo corra de fecha.
+ */
+export function instanteDelMovimiento(fecha: string | undefined, correo: Date): Date {
+  if (fecha === undefined) return correo;
+  if (!parseIsoDate(fecha)) throw datosInvalidos({ fecha: ['La fecha no es válida'] });
+  const diaDelCorreo = new Date(correo.getTime() - 5 * 3600_000).toISOString().slice(0, 10);
+  return diaDelCorreo === fecha ? correo : new Date(`${fecha}T12:00:00-05:00`);
+}
+
 export interface ResultadoConciliacion {
   notificacion: NotificacionesCorreo;
   transaccion: Transacciones | null;
@@ -298,6 +309,9 @@ export class NotificacionesCorreoService {
     if (dto.monto !== undefined && !recienCreada) {
       throw datosInvalidos({ monto: ['El monto de una compra importada no se edita aquí: descártala y regístrala de nuevo'] });
     }
+    if (dto.fecha !== undefined && !recienCreada) {
+      throw datosInvalidos({ fecha: ['La fecha de una compra importada no se edita aquí: descártala y regístrala de nuevo'] });
+    }
     let compra = compraInicial;
 
     if (dto.concepto !== undefined && dto.concepto !== compra.concepto) {
@@ -338,6 +352,7 @@ export class NotificacionesCorreoService {
 
   private async confirmarExistente(tx: Tx, actual: Transacciones, dto: ConciliarCorreoDto, ownerUserId: bigint): Promise<Transacciones> {
     const data: Prisma.TransaccionesUncheckedUpdateInput = { estado: EstadoTransaccion.CONFIRMADO };
+    if (dto.fecha !== undefined) throw datosInvalidos({ fecha: ['La fecha de un movimiento ya registrado no se edita aquí'] });
     if (dto.categoriaId !== undefined) data.categoria_id = await assertCategoria(tx, dto.categoriaId, ownerUserId);
     if (dto.concepto !== undefined) data.concepto = dto.concepto;
     if (dto.notas !== undefined) data.notas = dto.notas;
@@ -372,7 +387,7 @@ export class NotificacionesCorreoService {
         cuentaDestinoId: interpretado.tipo === TipoTransaccion.INGRESO ? dto.cuentaId : null,
         tarjetaPagadaId: null,
         categoriaId: dto.categoriaId ?? null,
-        fechaTransaccion: notificacion.fecha_correo,
+        fechaTransaccion: instanteDelMovimiento(dto.fecha, notificacion.fecha_correo),
         concepto: (dto.concepto ?? interpretado.comercio ?? notificacion.asunto ?? 'Movimiento por correo').slice(0, 255),
         monedaOriginal: interpretado.moneda,
         montoOriginal: monto.toString(),
@@ -397,7 +412,7 @@ export class NotificacionesCorreoService {
     const monto = dto.monto !== undefined ? toDecimal(dto.monto) : interpretado.monto;
     if (!monto) throw datosInvalidos({ monto: ['monto es obligatorio: no se pudo leer del correo'] });
 
-    const fechaTexto = typeof datos.fecha === 'string' ? datos.fecha : formatIsoDate(truncateToDay(notificacion.fecha_correo));
+    const fechaTexto = dto.fecha ?? (typeof datos.fecha === 'string' ? datos.fecha : formatIsoDate(truncateToDay(notificacion.fecha_correo)));
     const fechaCompra = parseIsoDate(fechaTexto.slice(0, 10));
     if (!fechaCompra) throw datosInvalidos({ fecha: ['La fecha del correo no es válida'] });
 

@@ -49,6 +49,12 @@ describe('ConciliarCorreoDto: el cuerpo que arma la pantalla', () => {
     expect(texto.map((e) => e.property)).toEqual(['tasaCambio']);
   });
 
+  it('la fecha corregida es opcional, vacía = no enviada, y solo admite yyyy-MM-dd', async () => {
+    expect(dto({ fecha: '' }).fecha).toBeUndefined();
+    expect(await validate(dto({ fecha: '2026-10-15' }))).toEqual([]);
+    expect((await validate(dto({ fecha: '15/10/2026' }))).map((e) => e.property)).toEqual(['fecha']);
+  });
+
   it('un id que no es entero sigue siendo inválido (no se oculta el error)', async () => {
     const errores = await validate(dto({ tarjetaId: 'abc', categoriaId: 1.5 }));
     expect(errores.map((e) => e.property).sort()).toEqual(['categoriaId', 'tarjetaId']);

@@ -227,6 +227,35 @@ describe('NotificacionesCorreoService.conciliar — compras de TC, préstamos y 
     expect(transacciones.insertar.mock.calls[0][1]).toMatchObject({ monedaOriginal: 'USD', montoOriginal: '49.99', tasaCambio: '4100.5' });
   });
 
+  it('fecha corregida: el movimiento nuevo usa ese día (conserva la hora del correo si es el mismo día) y la compra nueva también', async () => {
+    const { prisma, service, compras, transacciones } = setup();
+    prisma.cuentasFinancieras.findFirst.mockResolvedValue({ id: 3n });
+    transacciones.insertar.mockResolvedValue({ id: 72n });
+    prisma.notificacionesCorreo.findFirst.mockResolvedValue(notificacion({ compra_credito_generada_id: null, datos_parseados: { monto: '50000', moneda: 'COP', comercio: 'EXITO' } }));
+
+    // el correo llegó el 13/10 14:00 en Bogotá (19:00Z): el mismo día conserva la hora; otro día usa el mediodía de Bogotá
+    await service.conciliar(9, { accion: 'CONFIRMAR', cuentaId: 3, fecha: '2026-10-13' }, OWNER);
+    expect(transacciones.insertar.mock.calls[0][1].fechaTransaccion.toISOString()).toBe('2026-10-13T19:00:00.000Z');
+    await service.conciliar(9, { accion: 'CONFIRMAR', cuentaId: 3, fecha: '2026-10-11' }, OWNER);
+    expect(transacciones.insertar.mock.calls[1][1].fechaTransaccion.toISOString()).toBe('2026-10-11T17:00:00.000Z');
+
+    prisma.tarjetas.findFirst.mockResolvedValue({ tipo_tarjeta: 'CREDITO', cuenta_id: null });
+    prisma.comprasCredito.findUniqueOrThrow.mockResolvedValue({ id: 600n, concepto: 'EXITO', numero_cuotas: 1, valor_compra: dec('50000') });
+    await service.conciliar(9, { accion: 'CONFIRMAR', tarjetaId: 10, fecha: '2026-10-11' }, OWNER);
+    expect(compras.saveTx.mock.calls[0][1].fechaCompra.toISOString()).toBe('2026-10-11T00:00:00.000Z');
+  });
+
+  it('fecha inexistente → 400; en un movimiento o compra ya registrados la fecha no se edita', async () => {
+    const { prisma, service } = setup();
+    prisma.cuentasFinancieras.findFirst.mockResolvedValue({ id: 3n });
+    prisma.notificacionesCorreo.findFirst.mockResolvedValue(notificacion({ compra_credito_generada_id: null }));
+    await expect(service.conciliar(9, { accion: 'CONFIRMAR', cuentaId: 3, fecha: '2026-02-31' }, OWNER)).rejects.toMatchObject({ status: 400, response: { errors: { fecha: [expect.any(String)] } } });
+
+    prisma.notificacionesCorreo.findFirst.mockResolvedValue(notificacion());
+    prisma.comprasCredito.findFirst.mockResolvedValue(compraActual);
+    await expect(service.conciliar(9, { accion: 'CONFIRMAR', fecha: '2026-10-11' }, OWNER)).rejects.toMatchObject({ status: 400, response: { errors: { fecha: [expect.any(String)] } } });
+  });
+
   it('DESCARTAR elimina la compra importada (y sus cuotas) y marca IGNORADO', async () => {
     const { prisma, service, compras } = setup();
     prisma.notificacionesCorreo.findFirst.mockResolvedValue(notificacion());
