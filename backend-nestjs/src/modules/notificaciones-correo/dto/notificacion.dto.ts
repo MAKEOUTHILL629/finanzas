@@ -17,6 +17,7 @@ import {
 } from 'class-validator';
 import { EstadoNotificacionCorreo, MetodoPrestamo } from '../../../common/enums/finance.enums';
 import { IsMoney } from '../../../common/validators/is-money.decorator';
+import { EnteroOpcional, VacioAUndefined } from '../../../common/validators/normalizar-opcional.decorator';
 
 /**
  * Payload del lector de correos: usa snake_case porque así lo envía el worker/webhook
@@ -66,6 +67,7 @@ export class ResponsableConciliacionDto {
   porcentajePago: number | string;
 
   @ApiPropertyOptional({ description: 'Cuotas que asume (default: todas las de la compra)' })
+  @EnteroOpcional()
   @IsOptional()
   @IsInt()
   @IsPositive()
@@ -79,16 +81,19 @@ export class ConvertirEnPrestamoDto {
   responsableId: number;
 
   @ApiPropertyOptional({ example: '2026-11-15', description: 'Fecha estimada de cobro (default: la fecha del egreso)' })
+  @VacioAUndefined()
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}/, { message: 'fechaCobro debe tener formato yyyy-MM-dd' })
   fechaCobro?: string;
 
   @ApiPropertyOptional()
+  @VacioAUndefined()
   @IsOptional()
   @IsString()
   comentarios?: string;
 
   @ApiPropertyOptional({ enum: MetodoPrestamo })
+  @VacioAUndefined()
   @IsOptional()
   @IsEnum(MetodoPrestamo)
   metodo?: MetodoPrestamo;
@@ -96,11 +101,13 @@ export class ConvertirEnPrestamoDto {
 
 export class ConciliarCorreoDto {
   @ApiPropertyOptional({ enum: ['CONFIRMAR', 'DESCARTAR'], default: 'CONFIRMAR' })
+  @VacioAUndefined()
   @IsOptional()
   @IsIn(['CONFIRMAR', 'DESCARTAR'])
   accion?: 'CONFIRMAR' | 'DESCARTAR';
 
   @ApiPropertyOptional({ description: 'Categoría a asignar a la transacción' })
+  @EnteroOpcional()
   @IsOptional()
   @IsInt()
   @IsPositive()
@@ -109,39 +116,58 @@ export class ConciliarCorreoDto {
   @ApiPropertyOptional({
     description: 'Cuenta a usar si la ingesta no pudo identificarla por los últimos 4 dígitos (genera la transacción)',
   })
+  @EnteroOpcional()
   @IsOptional()
   @IsInt()
   @IsPositive()
   cuentaId?: number;
 
   @ApiPropertyOptional({ description: 'Corrige el concepto detectado (transacción o compra)' })
+  @VacioAUndefined()
   @IsOptional()
   @IsString()
   concepto?: string;
 
   @ApiPropertyOptional({ description: 'Corrige el monto (COP) detectado' })
+  @VacioAUndefined()
   @IsOptional()
   @IsMoney({ maxDecimals: 2, positive: true })
   monto?: number | string;
 
+  @ApiPropertyOptional({
+    example: '4100.50',
+    description: 'TRM (COP por unidad) para un correo en dólares que no trae tasa: sin ella no se puede registrar un movimiento en otra moneda',
+  })
+  @VacioAUndefined()
+  @IsOptional()
+  @IsMoney({ maxDecimals: 4, positive: true })
+  tasaCambio?: number | string;
+
   @ApiPropertyOptional()
+  @VacioAUndefined()
   @IsOptional()
   @IsString()
   notas?: string;
 
   @ApiPropertyOptional({ description: 'Compra de TC importada: nuevo número de cuotas (recalcula CuotasDetalle)' })
+  @EnteroOpcional()
   @IsOptional()
   @IsInt()
   @Min(1)
   numeroCuotas?: number;
 
-  @ApiPropertyOptional({ description: 'Tarjeta a usar si la ingesta no la identificó (crea la compra a 1 cuota)' })
+  @ApiPropertyOptional({
+    description:
+      'Tarjeta a usar si la ingesta no la identificó. De crédito: crea la compra a 1 cuota. De débito: equivale a elegir su cuenta (el movimiento se registra en la cuenta de la tarjeta).',
+  })
+  @EnteroOpcional()
   @IsOptional()
   @IsInt()
   @IsPositive()
   tarjetaId?: number;
 
   @ApiPropertyOptional({ type: [ResponsableConciliacionDto], description: 'Responsables de la compra (Trigger 6 imputa el sub-ledger)' })
+  @VacioAUndefined()
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(20)
@@ -150,6 +176,7 @@ export class ConciliarCorreoDto {
   responsables?: ResponsableConciliacionDto[];
 
   @ApiPropertyOptional({ type: ConvertirEnPrestamoDto, description: 'Convierte el egreso en un préstamo POR_COBRAR' })
+  @VacioAUndefined()
   @IsOptional()
   @ValidateNested()
   @Type(() => ConvertirEnPrestamoDto)

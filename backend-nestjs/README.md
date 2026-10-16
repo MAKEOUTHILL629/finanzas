@@ -47,6 +47,9 @@ curl -X POST http://localhost:9000/api/notificaciones-correo/sync-batch   -H "x-
   («recibiste un pago en tu cuenta de Ahorros») va a la cuenta marcada `es_principal`.
 - Conciliación desde Angular: `PATCH /api/notificaciones-correo/:id/conciliar` (confirmar, descartar, cambiar `numeroCuotas`,
   asignar `responsables`, indicar `cuentaId`/`tarjetaId`, `convertirEnPrestamo`). Todo en una sola transacción de BD.
+  `tarjetaId` acepta **cualquier** tarjeta (selector único): una de crédito crea la compra a 1 cuota; una de débito registra el movimiento en
+  su cuenta. Un aviso en dólares sin tasa pide `tasaCambio` (la TRM, COP por dólar). Los campos opcionales vacíos (`""`, `null`) se
+  tratan como «no enviados» (`VacioAUndefined`/`EnteroOpcional`), no como un 400.
 
 ### Correos inteligentes (`src/modules/notificaciones-correo/`)
 

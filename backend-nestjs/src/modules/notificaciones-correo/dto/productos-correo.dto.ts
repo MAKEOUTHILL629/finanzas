@@ -17,26 +17,31 @@ import {
 } from 'class-validator';
 import { TipoCuentaFinanciera } from '../../../common/enums/finance.enums';
 import { IsMoney } from '../../../common/validators/is-money.decorator';
+import { EnteroOpcional, VacioAUndefined } from '../../../common/validators/normalizar-opcional.decorator';
 
 export class NuevoProductoDto {
   @ApiPropertyOptional({ example: 'Bancolombia Ahorros', description: 'Cuenta nueva: nombre' })
+  @VacioAUndefined()
   @IsOptional()
   @IsString()
   @MaxLength(120)
   nombre?: string;
 
   @ApiPropertyOptional({ enum: TipoCuentaFinanciera, description: 'Cuenta nueva: tipo (por defecto AHORROS)' })
+  @VacioAUndefined()
   @IsOptional()
   @IsEnum(TipoCuentaFinanciera)
   tipoCuenta?: TipoCuentaFinanciera;
 
   @ApiPropertyOptional({ example: 'Bancolombia' })
+  @VacioAUndefined()
   @IsOptional()
   @IsString()
   @MaxLength(120)
   bancoEntidad?: string;
 
   @ApiPropertyOptional({ description: 'Saldo con el que se abre la cuenta (los movimientos reprocesados lo ajustan después)' })
+  @VacioAUndefined()
   @IsOptional()
   @IsMoney({ maxDecimals: 2, allowNegative: true })
   saldoInicial?: number | string;
@@ -47,12 +52,14 @@ export class NuevoProductoDto {
   esPrincipal?: boolean;
 
   @ApiPropertyOptional({ example: 'American Express', description: 'Tarjeta nueva: franquicia' })
+  @VacioAUndefined()
   @IsOptional()
   @IsString()
   @MaxLength(120)
   franquicia?: string;
 
   @ApiPropertyOptional({ example: 'Amex Platinum', description: 'Tarjeta nueva: descripción' })
+  @VacioAUndefined()
   @IsOptional()
   @IsString()
   @MaxLength(255)
@@ -70,12 +77,14 @@ export class AsignarProductoDto {
   destino: 'TARJETA' | 'CUENTA';
 
   @ApiPropertyOptional({ description: 'Producto existente al que se agregan los dígitos' })
+  @EnteroOpcional()
   @IsOptional()
   @IsInt()
   @IsPositive()
   id?: number;
 
   @ApiPropertyOptional({ type: NuevoProductoDto, description: 'Datos del producto a crear con estos dígitos (en lugar de `id`)' })
+  @VacioAUndefined()
   @IsOptional()
   @ValidateNested()
   @Type(() => NuevoProductoDto)

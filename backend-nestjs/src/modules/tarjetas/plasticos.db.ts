@@ -63,7 +63,12 @@ async function evidenciaDeUltimos4(db: Db, ownerUserId: bigint, ultimos4: string
 export async function asegurarPlastico(db: Db, tarjeta: { id: bigint; owner_user_id: bigint | null }, ultimos4: string): Promise<TarjetaPlasticos> {
   const existentes = await plasticosDeTarjeta(db, tarjeta.id);
   const ya = existentes.find((p) => p.ultimos_4 === ultimos4);
-  if (ya) return ya;
+  if (ya) {
+    // El plástico ya estaba registrado, pero la lista de dígitos de la tarjeta (la que lee el parser de correos) puede no incluirlo:
+    // sin esto «asignar» no tenía efecto y la sugerencia volvía a aparecer.
+    await sincronizarCadena(db, tarjeta.id);
+    return ya;
+  }
 
   const activo = existentes.find((p) => p.es_activo);
   let creado: TarjetaPlasticos;

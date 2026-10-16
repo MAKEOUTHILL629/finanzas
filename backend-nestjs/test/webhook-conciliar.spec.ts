@@ -178,6 +178,7 @@ describe('NotificacionesCorreoService.conciliar — compras de TC, préstamos y 
   it('sin tarjeta identificada: tarjetaId crea la compra a 1 cuota y la enlaza a la notificación', async () => {
     const { prisma, service, compras } = setup();
     prisma.notificacionesCorreo.findFirst.mockResolvedValue(notificacion({ compra_credito_generada_id: null }));
+    prisma.tarjetas.findFirst.mockResolvedValue({ tipo_tarjeta: 'CREDITO', cuenta_id: null });
     prisma.comprasCredito.findUniqueOrThrow.mockResolvedValue({ id: 600n, concepto: 'EXITO', numero_cuotas: 1, valor_compra: dec('50000') });
 
     const r = await service.conciliar(9, { accion: 'CONFIRMAR', tarjetaId: 10 }, OWNER);
@@ -187,6 +188,43 @@ describe('NotificacionesCorreoService.conciliar — compras de TC, préstamos y 
     expect(entrada.fechaCompra.toISOString()).toBe('2026-10-13T00:00:00.000Z');
     expect(r.compra?.id).toBe(600n);
     expect(prisma.notificacionesCorreo.update.mock.calls[0][0].data).toMatchObject({ compra_credito_generada_id: 600n });
+  });
+
+  it('selector unificado: una tarjeta de DÉBITO registra el movimiento en su cuenta (no crea una compra)', async () => {
+    const { prisma, service, compras, transacciones } = setup();
+    prisma.notificacionesCorreo.findFirst.mockResolvedValue(notificacion({ compra_credito_generada_id: null, datos_parseados: { monto: '50000', moneda: 'COP', comercio: 'EXITO', ultimos_4: '7992' } }));
+    prisma.tarjetas.findFirst.mockResolvedValue({ tipo_tarjeta: 'DEBITO', cuenta_id: 3n });
+    prisma.cuentasFinancieras.findFirst.mockResolvedValue({ id: 3n });
+    transacciones.insertar.mockResolvedValue({ id: 70n });
+
+    const r = await service.conciliar(9, { accion: 'CONFIRMAR', tarjetaId: 12 }, OWNER);
+
+    expect(compras.saveTx).not.toHaveBeenCalled();
+    expect(transacciones.insertar.mock.calls[0][1]).toMatchObject({ cuentaOrigenId: 3, tipoTransaccion: 'EGRESO', montoOriginal: '50000' });
+    expect(r.transaccion?.id).toBe(70n);
+    expect(prisma.notificacionesCorreo.update.mock.calls[0][0].data).toMatchObject({ transaccion_generada_id: 70n });
+  });
+
+  it('selector unificado: débito sin cuenta → 400 que lo explica; tarjeta ajena o inexistente → 404', async () => {
+    const { prisma, service } = setup();
+    prisma.notificacionesCorreo.findFirst.mockResolvedValue(notificacion({ compra_credito_generada_id: null }));
+    prisma.tarjetas.findFirst.mockResolvedValueOnce({ tipo_tarjeta: 'DEBITO', cuenta_id: null });
+    await expect(service.conciliar(9, { accion: 'CONFIRMAR', tarjetaId: 12 }, OWNER)).rejects.toMatchObject({ status: 400, response: { errors: { tarjetaId: [expect.stringContaining('cuenta')] } } });
+    prisma.tarjetas.findFirst.mockResolvedValueOnce(null);
+    await expect(service.conciliar(9, { accion: 'CONFIRMAR', tarjetaId: 99 }, OWNER)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('correo en dólares sin tasa: pide la TRM (campo tasaCambio) y con ella crea el movimiento', async () => {
+    const { prisma, service, transacciones } = setup();
+    prisma.notificacionesCorreo.findFirst.mockResolvedValue(notificacion({ compra_credito_generada_id: null, datos_parseados: { monto: '49.99', moneda: 'USD', comercio: 'NETFLIX' } }));
+    prisma.cuentasFinancieras.findFirst.mockResolvedValue({ id: 3n });
+    transacciones.insertar.mockResolvedValue({ id: 71n });
+
+    await expect(service.conciliar(9, { accion: 'CONFIRMAR', cuentaId: 3 }, OWNER)).rejects.toMatchObject({ status: 400, response: { errors: { tasaCambio: [expect.stringContaining('TRM')] } } });
+    expect(transacciones.insertar).not.toHaveBeenCalled();
+
+    await service.conciliar(9, { accion: 'CONFIRMAR', cuentaId: 3, tasaCambio: '4100.50' }, OWNER);
+    expect(transacciones.insertar.mock.calls[0][1]).toMatchObject({ monedaOriginal: 'USD', montoOriginal: '49.99', tasaCambio: '4100.5' });
   });
 
   it('DESCARTAR elimina la compra importada (y sus cuotas) y marca IGNORADO', async () => {

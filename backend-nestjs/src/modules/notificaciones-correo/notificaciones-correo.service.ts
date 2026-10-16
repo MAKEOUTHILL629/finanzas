@@ -181,10 +181,11 @@ export class NotificacionesCorreoService {
    *  • sin generar nada: crear la transacción indicando `cuentaId`.
    * DESCARTAR anula la transacción pendiente / elimina la compra importada. Todo en UNA transacción.
    */
-  async conciliar(id: number, dto: ConciliarCorreoDto, ownerUserId: bigint): Promise<ResultadoConciliacion> {
+  async conciliar(id: number, dtoEntrada: ConciliarCorreoDto, ownerUserId: bigint): Promise<ResultadoConciliacion> {
     return this.prisma.$transaction(async (tx) => {
       const notificacion = await tx.notificacionesCorreo.findFirst({ where: { id: BigInt(id), owner_user_id: ownerUserId } });
       if (!notificacion) throw new NotFoundException(`Notificación ${id} no encontrada`);
+      const dto = await this.resolverProducto(tx, dtoEntrada, ownerUserId);
       // Lo que el sync resolvió solo (tiene `vinculo`) se puede DESHACER descartándolo; confirmar de nuevo no tiene sentido.
       const deshacerAutomatico =
         (dto.accion ?? 'CONFIRMAR') === 'DESCARTAR' && notificacion.estado_procesamiento === EstadoNotificacionCorreo.CONCILIADO && (notificacion.vinculo ?? null) !== null;
@@ -243,6 +244,19 @@ export class NotificacionesCorreoService {
   }
 
   // ───────────────────────────── conciliación: pasos ─────────────────────────────
+
+  /**
+   * El selector unificado de la pantalla envía `tarjetaId` para CUALQUIER tarjeta. Una de crédito crea la compra; una de débito es
+   * un movimiento de su cuenta (se registra en esa cuenta, como si se hubiera elegido la cuenta). Una tarjeta ajena no existe.
+   */
+  private async resolverProducto(tx: Tx, dto: ConciliarCorreoDto, ownerUserId: bigint): Promise<ConciliarCorreoDto> {
+    if (dto.tarjetaId === undefined) return dto;
+    const tarjeta = await tx.tarjetas.findFirst({ where: { id: BigInt(dto.tarjetaId), owner_user_id: ownerUserId }, select: { tipo_tarjeta: true, cuenta_id: true } });
+    if (!tarjeta) throw new NotFoundException(`Tarjeta ${dto.tarjetaId} no encontrada`);
+    if (tarjeta.tipo_tarjeta !== 'DEBITO') return dto;
+    if (tarjeta.cuenta_id === null) throw datosInvalidos({ tarjetaId: ['La tarjeta de débito no tiene cuenta asociada: asígnale una en Tarjetas'] });
+    return { ...dto, tarjetaId: undefined, cuentaId: dto.cuentaId ?? Number(tarjeta.cuenta_id) };
+  }
 
   private async descartar(
     tx: Tx,
@@ -345,8 +359,9 @@ export class NotificacionesCorreoService {
     const interpretado = interpretarDatosParseados(notificacion.datos_parseados as Record<string, unknown> | null);
     const monto = dto.monto !== undefined ? toDecimal(dto.monto) : interpretado.monto;
     if (!monto) throw datosInvalidos({ monto: ['monto es obligatorio: no se pudo leer del correo'] });
-    if (interpretado.moneda !== 'COP' && !interpretado.tasa) {
-      throw datosInvalidos({ monto: [`El correo está en ${interpretado.moneda} sin tasa de cambio`] });
+    const tasa = interpretado.moneda === 'COP' ? null : (interpretado.tasa ?? (dto.tasaCambio !== undefined ? toDecimal(dto.tasaCambio) : null));
+    if (interpretado.moneda !== 'COP' && !tasa) {
+      throw datosInvalidos({ tasaCambio: [`El correo está en ${interpretado.moneda} y no trae tasa de cambio: indica la TRM (cuántos pesos vale cada ${interpretado.moneda})`] });
     }
 
     return this.transacciones.insertar(
@@ -361,7 +376,7 @@ export class NotificacionesCorreoService {
         concepto: (dto.concepto ?? interpretado.comercio ?? notificacion.asunto ?? 'Movimiento por correo').slice(0, 255),
         monedaOriginal: interpretado.moneda,
         montoOriginal: monto.toString(),
-        tasaCambio: interpretado.tasa?.toString(),
+        tasaCambio: tasa?.toString(),
         origenRegistro: OrigenRegistro.EMAIL_AUTO,
         estado: EstadoTransaccion.CONFIRMADO,
         notas: dto.notas ?? `Conciliada desde el correo ${notificacion.external_message_id}`,
@@ -388,9 +403,10 @@ export class NotificacionesCorreoService {
 
     let usd: { tasa: string } | null = null;
     if (interpretado.moneda === 'USD') {
+      // La que indica el usuario manda; si no, la de la última compra en dólares o la configurada (DEFAULT_TRM_USD).
       const respaldo = this.config.get<string | number>('DEFAULT_TRM_USD');
-      const tasa = await resolverTrmUsd(tx, ownerUserId, respaldo ? rate(toDecimal(respaldo)) : null);
-      if (!tasa) throw datosInvalidos({ monto: ['No hay TRM disponible para una compra en USD (configura DEFAULT_TRM_USD)'] });
+      const tasa = dto.tasaCambio !== undefined ? rate(toDecimal(dto.tasaCambio)) : await resolverTrmUsd(tx, ownerUserId, respaldo ? rate(toDecimal(respaldo)) : null);
+      if (!tasa) throw datosInvalidos({ tasaCambio: ['Es una compra en dólares y no hay una TRM disponible: indica la TRM (cuántos pesos vale cada dólar)'] });
       usd = { tasa: tasa.toString() };
     }
 
