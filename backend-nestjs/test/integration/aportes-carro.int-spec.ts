@@ -376,6 +376,26 @@ describeDb('Integración BD — aportes del carro, cruces, recurrentes por perso
   describe('Cargos recurrentes por persona', () => {
     const crear = (extra: Record<string, unknown>) => s.recurrentesPersona.create({ concepto: 'Plan de celular', valorMensual: 65000, mesInicio: anterior, ...extra } as any, semilla.userId);
 
+    it('asegurarMes (la lectura de la liquidación) no repite las escrituras mientras nada cambie, y crear un recurrente las reactiva', async () => {
+      s.recurrentesPersona.ttlGeneracionMs = 60_000;
+      try {
+        const escrituras = jest.spyOn(s.prisma, '$executeRaw');
+        const base = escrituras.mock.calls.length;
+        await s.recurrentesPersona.asegurarMes(mes, semilla.userId);
+        expect(escrituras.mock.calls.length - base).toBe(2); // INSERT de los asientos + UPDATE del contador
+        await s.recurrentesPersona.asegurarMes(mes, semilla.userId);
+        await s.liquidacion.liquidacion(mes, semilla.userId);
+        expect(escrituras.mock.calls.length - base).toBe(2); // ni la segunda llamada ni la liquidación escribieron
+
+        await crear({ personaId: semilla.andresId });
+        const liq = await s.liquidacion.liquidacion(mes, semilla.userId, { personaId: semilla.andresId });
+        expect(liq.recurrentesGenerados).toBe(2); // el recurrente nuevo se generó al leer
+        escrituras.mockRestore();
+      } finally {
+        s.recurrentesPersona.ttlGeneracionMs = 0;
+      }
+    });
+
     it('INDEFINIDO (de por vida) se cobra todos los meses desde el inicio, de forma idempotente', async () => {
       await crear({ personaId: semilla.andresId });
       const r1 = await s.recurrentesPersona.generarMes(mes, semilla.userId);

@@ -186,6 +186,7 @@ export async function crearServicios(): Promise<Servicios> {
   const responsables = new ResponsablesService(prisma);
   const subledger = new SubledgerDeudasService(prisma);
   const recurrentesPersona = new RecurrentesPersonaService(prisma);
+  recurrentesPersona.ttlGeneracionMs = 0; // las pruebas reinician la BD entre casos: siempre se genera
   const productosCorreo = new ProductosCorreoService(prisma);
   const cuotasTerceros = new CuotasTercerosService(prisma);
   const liquidacion = new LiquidacionMensualService(prisma, recurrentesPersona, subledger, cuotasTerceros);

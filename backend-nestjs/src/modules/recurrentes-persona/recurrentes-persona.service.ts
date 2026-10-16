@@ -29,6 +29,14 @@ export function calcularMesFin(modalidad: string, mesInicio: string, numeroMeses
  */
 @Injectable()
 export class RecurrentesPersonaService {
+  /**
+   * Cuánto se recuerda que un mes ya se generó (ms). Leer una pantalla que muestra deudas (liquidación, estado de cuenta de personas,
+   * inicio) regeneraba los cargos cada vez: dos escrituras a la base antes de cada lectura. Como es idempotente y todo cambio de un
+   * recurrente (crear, editar, borrar) borra el recuerdo, solo se repite pasado este tiempo. 0 = generar siempre (las pruebas).
+   */
+  ttlGeneracionMs = 30_000;
+  private readonly generados = new Map<string, number>();
+
   constructor(private readonly prisma: PrismaService) {}
 
   async list(ownerUserId: bigint, filtro: FiltroRecurrentesPersonaDto = {}) {
@@ -58,6 +66,7 @@ export class RecurrentesPersonaService {
     const valor = money(toDecimal(dto.valorMensual));
     if (!valor.greaterThan(0)) throw datosInvalidos({ valorMensual: ['valorMensual debe ser mayor a 0'] });
 
+    this.olvidarGeneracion(ownerUserId);
     const id = await this.prisma.$transaction(async (tx) => {
       const personaId = await assertPersona(tx, dto.personaId, ownerUserId);
       const creado = await tx.cargosRecurrentesPersona.create({
@@ -83,6 +92,7 @@ export class RecurrentesPersonaService {
   }
 
   async update(id: number, dto: ActualizarRecurrentePersonaDto, ownerUserId: bigint) {
+    this.olvidarGeneracion(ownerUserId);
     await this.prisma.$transaction(async (tx) => {
       const actual = await tx.cargosRecurrentesPersona.findFirst({ where: { id: BigInt(id), owner_user_id: ownerUserId } });
       if (!actual) throw new NotFoundException(`Recurrente por persona ${id} no encontrado`);
@@ -143,6 +153,7 @@ export class RecurrentesPersonaService {
 
   /** Elimina el recurrente y anula sus asientos del sub-ledger (se conservan como ANULADO, sin contar en el estado de cuenta). */
   async remove(id: number, ownerUserId: bigint) {
+    this.olvidarGeneracion(ownerUserId);
     return this.prisma.$transaction(async (tx) => {
       const actual = await tx.cargosRecurrentesPersona.findFirst({ where: { id: BigInt(id), owner_user_id: ownerUserId } });
       if (!actual) throw new NotFoundException(`Recurrente por persona ${id} no encontrado`);
@@ -160,6 +171,30 @@ export class RecurrentesPersonaService {
    * respetando el plazo (k ≤ X), y actualiza `cuotas_generadas` / `estado`. Se invoca antes de calcular la liquidación del mes.
    */
   async generarMes(periodo: string, ownerUserId: bigint) {
+    const movimientosGenerados = await this.materializarMes(periodo, ownerUserId);
+    const recurrentes = await this.list(ownerUserId);
+    return { periodo, movimientosGenerados, recurrentes };
+  }
+
+  /**
+   * Lo mismo que `generarMes` pero para quien solo necesita que los asientos del mes existan antes de leer (la liquidación): no
+   * devuelve la lista de recurrentes y, si el mes se generó hace menos de `ttlGeneracionMs`, no vuelve a escribir.
+   */
+  async asegurarMes(periodo: string, ownerUserId: bigint): Promise<{ movimientosGenerados: number }> {
+    const clave = `${ownerUserId}|${periodo}`;
+    const antes = this.generados.get(clave);
+    if (antes !== undefined && Date.now() - antes < this.ttlGeneracionMs) return { movimientosGenerados: 0 };
+    const movimientosGenerados = await this.materializarMes(periodo, ownerUserId);
+    this.generados.set(clave, Date.now());
+    return { movimientosGenerados };
+  }
+
+  /** Crear, editar o borrar un recurrente cambia lo que hay que generar: el siguiente `asegurarMes` escribe de nuevo. */
+  private olvidarGeneracion(ownerUserId: bigint): void {
+    for (const clave of this.generados.keys()) if (clave.startsWith(`${ownerUserId}|`)) this.generados.delete(clave);
+  }
+
+  private async materializarMes(periodo: string, ownerUserId: bigint): Promise<number> {
     this.exigirPeriodo(periodo);
     const ahora = periodoActual();
 
@@ -226,8 +261,7 @@ export class RecurrentesPersonaService {
           OR c.estado <> CASE WHEN c.modalidad_duracion = 'PLAZO_FIJO' AND x.n >= c.numero_meses THEN 'FINALIZADO' ELSE 'ACTIVO' END
         )`;
 
-    const recurrentes = await this.list(ownerUserId);
-    return { periodo, movimientosGenerados: Number(generados), recurrentes };
+    return Number(generados);
   }
 
   // ───────────────────────────── helpers ─────────────────────────────

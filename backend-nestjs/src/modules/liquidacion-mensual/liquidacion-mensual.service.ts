@@ -127,7 +127,7 @@ export class LiquidacionMensualService {
 
   async liquidacion(periodo: string, ownerUserId: bigint, opciones: { personaId?: number; todas?: boolean } = {}) {
     if (!isValidPeriodo(periodo)) throw datosInvalidos({ periodo: ['periodo debe tener formato YYYY-MM'] });
-    const generacion = await this.recurrentes.generarMes(periodo, ownerUserId);
+    const generacion = await this.recurrentes.asegurarMes(periodo, ownerUserId);
 
     const filtroPersona = opciones.personaId !== undefined ? { persona_id: BigInt(opciones.personaId) } : {};
     const vigente = { OR: [{ estado: null }, { estado: { not: EstadoMovimientoDeuda.ANULADO } }] };
