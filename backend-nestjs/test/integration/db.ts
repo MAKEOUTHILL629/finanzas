@@ -13,6 +13,8 @@ import { ConsultasPagosService } from '../../src/modules/consultas-pagos/consult
 import { CobroPublicoService } from '../../src/modules/cobros/cobro-publico.service';
 import { CobrosPuntualesService } from '../../src/modules/cobros/cobros-puntuales.service';
 import { EnlacesCobroService } from '../../src/modules/cobros/enlaces-cobro.service';
+import { MetodosPagoService } from '../../src/modules/cobros/metodos-pago.service';
+import { ObjecionesCobroService } from '../../src/modules/cobros/objeciones-cobro.service';
 import { ReportesPagoService } from '../../src/modules/cobros/reportes-pago.service';
 import { CuentasFinancierasService } from '../../src/modules/cuentas-financieras/cuentas-financieras.service';
 import { GastosRecurrentesService } from '../../src/modules/gastos-recurrentes/gastos-recurrentes.service';
@@ -99,6 +101,8 @@ const QUITAR_ANTES_DE_MIGRAR = `
   -- 004 (plásticos de tarjeta); ComprasCredito.plastico_id apunta a TarjetaPlasticos: primero la columna.
   ALTER TABLE "ComprasCredito" DROP COLUMN IF EXISTS plastico_id;
   DROP TABLE IF EXISTS "TarjetaPlasticos" CASCADE;
+  -- 010 (medios de pago, observaciones y abono parcial del enlace de cobro)
+  DROP TABLE IF EXISTS "ObjecionesCobro", "MetodosPagoUsuario" CASCADE;
   -- 009 (refinanciamiento); al quitar refinanciamiento_id cae su FK y su CHECK
   ALTER TABLE "ComprasCredito" DROP COLUMN IF EXISTS refinanciamiento_id, DROP COLUMN IF EXISTS es_refinanciamiento, DROP COLUMN IF EXISTS saldo_refinanciado, DROP COLUMN IF EXISTS sistema_amortizacion, DROP COLUMN IF EXISTS cuota_fija_pactada;`;
 
@@ -182,6 +186,8 @@ export interface Servicios {
   enlacesCobro: EnlacesCobroService;
   reportesPago: ReportesPagoService;
   cobroPublico: CobroPublicoService;
+  metodosPago: MetodosPagoService;
+  objeciones: ObjecionesCobroService;
   sugerencias: SugerenciasService;
   refinanciamientos: RefinanciamientoService;
   cuotasTerceros: CuotasTercerosService;
@@ -205,6 +211,8 @@ export async function crearServicios(): Promise<Servicios> {
   const liquidacion = new LiquidacionMensualService(prisma, recurrentesPersona, subledger, cuotasTerceros);
   const estadoCuentaPersonas = new EstadoCuentaPersonasService(prisma, liquidacion, cuotasTerceros);
   const enlacesCobro = new EnlacesCobroService(prisma, liquidacion);
+  const metodosPago = new MetodosPagoService(prisma);
+  const objeciones = new ObjecionesCobroService(prisma, enlacesCobro);
   const ejecutorCorreos = new EjecutorCorreosService(prisma, compras, transacciones, responsables, config);
   return {
     prisma,
@@ -237,7 +245,9 @@ export async function crearServicios(): Promise<Servicios> {
     cobrosPuntuales: new CobrosPuntualesService(prisma),
     enlacesCobro,
     reportesPago: new ReportesPagoService(prisma, enlacesCobro),
-    cobroPublico: new CobroPublicoService(prisma),
+    cobroPublico: new CobroPublicoService(prisma, metodosPago, objeciones),
+    metodosPago,
+    objeciones,
     sugerencias: new SugerenciasService(prisma),
     refinanciamientos: new RefinanciamientoService(prisma, compras),
     cuotasTerceros,

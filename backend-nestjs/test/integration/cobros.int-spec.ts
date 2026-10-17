@@ -249,7 +249,7 @@ describeDb('Integración BD — cobros a personas', () => {
     it('rechaza comprobantes con tipo falso, formato no permitido, vacíos o demasiado grandes; y reportes inválidos', async () => {
       const t = await tokenDe();
       // validación aparte del ritmo: instancia propia del servicio público
-      const publico = new CobroPublicoService(s.prisma);
+      const publico = new CobroPublicoService(s.prisma, s.metodosPago, s.objeciones);
       const reportar = (token: string, extra: Record<string, unknown> = {}) =>
         publico.reportar(token, { monto: 100000, fechaPago: new Date().toISOString().slice(0, 10), medio: 'BREB', ...extra } as any);
       const falso = Buffer.from('MZ este-es-un-ejecutable-disfrazado').toString('base64');

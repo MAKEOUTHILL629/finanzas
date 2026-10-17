@@ -127,6 +127,9 @@ guardar nada. Reversas: `sql/rollback_001_002.sql`, `sql/rollback_003.sql`.
 | `GET /api/sugerencias/comercios?q=&limit=` | Comercios que ya usaste con lo habitual de cada uno (cuotas, tarjeta, categoría, cuenta, responsable) |
 | `GET /api/refinanciamientos/candidatas?tarjetaId=` · `POST /simular` · `POST /` · `GET/DELETE /:id` | Unificación de deuda de una tarjeta: compras con saldo, simulación (cuota francesa por tasa M.V./E.A. o cuota pactada), ejecución atómica, detalle (maestra ↔ absorbidas) y deshacer |
 | `PATCH /api/compras-credito/:id` | Edición en línea de una compra a crédito: solo cambia los campos enviados (texto/estado/plástico no tocan las cuotas; valor, cuotas o interés las recalculan) |
+| `GET/POST /api/metodos-pago` · `PATCH/DELETE /:id` · `PUT/DELETE/GET /:id/qr` | Medios de pago que ven las personas en su enlace (cuenta, Nequi, Daviplata, llave Bre-B…) con QR opcional |
+| `GET /api/cobros/objeciones` · `POST /objeciones/:id/resolver` · `POST /enlaces/:id/descuento` · `GET /enlaces/:id/ajustes` · `DELETE /ajustes/:movimientoId` | Observaciones de las personas sobre su cobro: mantener, ajustar el monto, excluir o descontar (asiento `AJUSTE_DESCUENTO` que se puede deshacer) |
+| `POST /api/publico/cobros/:token/objeciones` · `GET /:token/metodos/:id/qr` | (Público) la persona observa un cobro con comentario obligatorio; ve el QR de un medio de pago |
 | `GET /api/liquidacion-mensual/:periodo[/persona/:id]` | Cuánto debe cada persona a fin de mes (tarjetas, préstamos, recurrentes, cruces, cuota del carro, abonos) |
 | `POST /api/liquidacion-mensual/cruce-entre-personas` · `/registrar-pago` | Cruce directo y pago de fin de mes |
 

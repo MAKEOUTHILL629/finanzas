@@ -6,6 +6,7 @@ import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { assertPersona } from '../../common/utils/ownership.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LiquidacionMensualService } from '../liquidacion-mensual/liquidacion-mensual.service';
+import { claveDeItem } from './ajustes-cobro.util';
 import { FiltroEnlacesDto, GenerarEnlaceDto } from './dto/cobros.dto';
 
 const DIAS_POR_DEFECTO = 45;
@@ -33,7 +34,7 @@ export interface SnapshotCobro {
     clave: string;
     titulo: string;
     subtotal: number;
-    items: Array<{ fecha: string; concepto: string; monto: number; signo: number; impacto: number; origen: string; detalle: unknown }>;
+    items: Array<{ fecha: string; concepto: string; monto: number; signo: number; impacto: number; origen: string; detalle: unknown; /** Identifica el renglón para poder observarlo (fase 6); las fotos anteriores no lo traen. */ clave?: string }>;
   }>;
   /** Faltante de la cuota del carro u otras obligaciones del mes. */
   obligaciones: Array<{ concepto: string; metaMensual: number; montoAbonado: number; saldoPendiente: number }>;
@@ -116,7 +117,13 @@ export class EnlacesCobroService {
       _count: true,
     });
     const porEnlace = new Map(pendientes.map((p) => [p.enlace_id, p._count]));
-    return enlaces.map((e) => this.vista(e, porEnlace.get(e.id) ?? 0));
+    const objeciones = await this.prisma.objecionesCobro.groupBy({
+      by: ['enlace_id'],
+      where: { owner_user_id: ownerUserId, estado: 'ABIERTA', enlace_id: { in: enlaces.map((e) => e.id) } },
+      _count: true,
+    });
+    const abiertas = new Map(objeciones.map((o) => [o.enlace_id, o._count]));
+    return enlaces.map((e) => this.vista(e, porEnlace.get(e.id) ?? 0, abiertas.get(e.id) ?? 0));
   }
 
   async refrescar(id: number, ownerUserId: bigint) {
@@ -155,8 +162,11 @@ export class EnlacesCobroService {
       data: { snapshot: snapshot as unknown as Prisma.InputJsonValue, snapshot_at: new Date(), updated_at: new Date() },
       include: { persona: { select: { nombre: true } } },
     });
-    const pendientes = await this.prisma.reportesPagoPersona.count({ where: { enlace_id: id, estado: 'PENDIENTE' } });
-    return this.vista(e, pendientes);
+    const [pendientes, abiertas] = await Promise.all([
+      this.prisma.reportesPagoPersona.count({ where: { enlace_id: id, estado: 'PENDIENTE' } }),
+      this.prisma.objecionesCobro.count({ where: { enlace_id: id, estado: 'ABIERTA' } }),
+    ]);
+    return this.vista(e, pendientes, abiertas);
   }
 
   /** Lo que ve la persona: solo SU liquidación del periodo, sin identificadores internos ni datos de otras personas. */
@@ -169,15 +179,18 @@ export class EnlacesCobroService {
         clave,
         titulo,
         subtotal: num(b.subtotal),
-        items: b.items.map((i) => ({
-          fecha: dia(i.fecha as Date),
-          concepto: String(i.concepto),
-          monto: num(i.monto),
-          signo: Number(i.signo),
-          impacto: num(i.impacto),
-          origen: String(i.origen),
-          detalle: this.detallePublico(i.detalle),
-        })),
+        items: b.items.map((i) => {
+          const item = {
+            fecha: dia(i.fecha as Date),
+            concepto: String(i.concepto),
+            monto: num(i.monto),
+            signo: Number(i.signo),
+            impacto: num(i.impacto),
+            origen: String(i.origen),
+            detalle: this.detallePublico(i.detalle),
+          };
+          return { ...item, clave: claveDeItem(clave, item) };
+        }),
       };
     }).filter((b) => b.items.length > 0);
 
@@ -214,7 +227,7 @@ export class EnlacesCobroService {
     return out;
   }
 
-  private vista(e: { id: bigint; persona_id: bigint; periodo: string; token: string; snapshot: Prisma.JsonValue; snapshot_at: Date; mensaje: string | null; instrucciones_pago: string | null; expira_at: Date; revocado: boolean; vistas: number; ultima_vista_at: Date | null; persona: { nombre: string | null } }, pendientes: number) {
+  private vista(e: { id: bigint; persona_id: bigint; periodo: string; token: string; snapshot: Prisma.JsonValue; snapshot_at: Date; mensaje: string | null; instrucciones_pago: string | null; expira_at: Date; revocado: boolean; vistas: number; ultima_vista_at: Date | null; persona: { nombre: string | null } }, pendientes: number, objecionesAbiertas = 0) {
     const snap = e.snapshot as unknown as SnapshotCobro;
     return {
       id: e.id,
@@ -233,6 +246,8 @@ export class EnlacesCobroService {
       snapshotEn: e.snapshot_at,
       resumen: snap?.resumen ?? null,
       reportesPendientes: pendientes,
+      /** Observaciones de la persona que aún esperan tu respuesta. */
+      objecionesAbiertas,
     };
   }
 }

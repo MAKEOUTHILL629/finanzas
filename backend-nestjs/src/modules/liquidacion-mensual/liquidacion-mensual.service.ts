@@ -24,6 +24,7 @@ export type OrigenMovimiento =
   | 'CRUCE_ENTRE_PERSONAS'
   | 'SALDO_A_FAVOR_CARRO'
   | 'PAGO_RECIBIDO'
+  | 'DESCUENTO'
   | 'OTRO';
 
 type Categoria = 'cuotasTarjetas' | 'cuotasPrestamos' | 'cargosRecurrentes' | 'cobrosPuntuales' | 'crucesCuentas' | 'saldoAFavorAplicado' | 'abonosRealizados' | 'otros';
@@ -70,6 +71,7 @@ export function categoriaDeMovimiento(tipo: string, signo: number): Categoria {
       return 'saldoAFavorAplicado';
     case TipoMovimientoDeuda.ABONO_PAGO_RECIBIDO:
     case TipoMovimientoDeuda.ABONO_APORTE_DIARIO:
+    case TipoMovimientoDeuda.AJUSTE_DESCUENTO:
       return 'abonosRealizados';
     default:
       return signo < 0 ? 'abonosRealizados' : 'otros';
@@ -99,6 +101,8 @@ export function origenDeMovimiento(m: Pick<Movimiento, 'tipo_movimiento' | 'cruc
       return 'SALDO_A_FAVOR_CARRO';
     case TipoMovimientoDeuda.ABONO_PAGO_RECIBIDO:
       return 'PAGO_RECIBIDO';
+    case TipoMovimientoDeuda.AJUSTE_DESCUENTO:
+      return 'DESCUENTO';
     default:
       return 'OTRO';
   }

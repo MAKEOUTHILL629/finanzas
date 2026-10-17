@@ -131,6 +131,8 @@ export enum TipoMovimientoDeuda {
   ABONO_RECURRENTE_PERSONA = 'ABONO_RECURRENTE_PERSONA',
   /** Saldo a favor de la cuota del carro aplicado al estado de cuenta de fin de mes. */
   ABONO_SALDO_FAVOR_CARRO = 'ABONO_SALDO_FAVOR_CARRO',
+  /** Descuento o ajuste que el propietario le hace a una persona sobre lo que debe (resuelve una observación de su enlace de cobro). */
+  AJUSTE_DESCUENTO = 'AJUSTE_DESCUENTO',
 }
 
 export enum EstadoMovimientoDeuda {

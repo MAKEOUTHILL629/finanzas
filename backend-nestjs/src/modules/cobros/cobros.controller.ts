@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Post, Put, Query, Res, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Put, Query, Res, StreamableFile } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -13,7 +13,10 @@ import {
   GuardarCobroPuntualDto,
   RechazarReporteDto,
 } from './dto/cobros.dto';
+import { ActualizarMetodoPagoDto, CrearMetodoPagoDto, DescuentoDirectoDto, FiltroObjecionesDto, QrMetodoPagoDto, ResolverObjecionDto } from './dto/cobros-fase6.dto';
 import { EnlacesCobroService } from './enlaces-cobro.service';
+import { MetodosPagoService } from './metodos-pago.service';
+import { ObjecionesCobroService } from './objeciones-cobro.service';
 import { ReportesPagoService } from './reportes-pago.service';
 
 /** Gastos repartidos entre varias personas (la luz, el mercado, una fiesta…): cada parte se cobra en la liquidación del mes. */
@@ -62,6 +65,7 @@ export class CobrosController {
   constructor(
     private readonly enlaces: EnlacesCobroService,
     private readonly reportes: ReportesPagoService,
+    private readonly objeciones: ObjecionesCobroService,
   ) {}
 
   // ── enlaces ──
@@ -94,6 +98,46 @@ export class CobrosController {
   @ApiOperation({ summary: 'Deja de funcionar el enlace (se puede reactivar generándolo otra vez)' })
   revocar(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
     return this.enlaces.revocar(id, userId);
+  }
+
+  @Post('enlaces/:id/descuento')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Descuento directo sobre lo que debe la persona (queda como asiento y se puede deshacer)',
+    description: 'Baja el saldo en todas las pantallas y recalcula en el acto el total que la persona ve en su enlace.',
+  })
+  descuento(@Param('id', ParseIntPipe) id: number, @Body() dto: DescuentoDirectoDto, @CurrentUser('userId') userId: bigint) {
+    return this.objeciones.descuentoDirecto(id, dto, userId);
+  }
+
+  @Get('enlaces/:id/ajustes')
+  @ApiOperation({ summary: 'Descuentos y ajustes vigentes de un enlace' })
+  ajustes(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
+    return this.objeciones.ajustes(id, userId);
+  }
+
+  @Delete('ajustes/:movimientoId')
+  @ApiOperation({ summary: 'Deshace un descuento o ajuste (la persona vuelve a deber ese monto; su observación vuelve a quedar abierta)' })
+  deshacerAjuste(@Param('movimientoId', ParseIntPipe) movimientoId: number, @CurrentUser('userId') userId: bigint) {
+    return this.objeciones.deshacerAjuste(movimientoId, userId);
+  }
+
+  // ── observaciones de las personas ──
+
+  @Get('objeciones')
+  @ApiOperation({ summary: 'Observaciones que las personas dejaron en su enlace (por estado y mes)' })
+  listarObjeciones(@Query() filtro: FiltroObjecionesDto, @CurrentUser('userId') userId: bigint) {
+    return this.objeciones.listar(userId, filtro);
+  }
+
+  @Post('objeciones/:id/resolver')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Resuelve una observación: mantener el cobro, ajustar su monto, excluirlo o descontar',
+    description: 'Ajustar, excluir y descontar registran un asiento de descuento y recalculan el total del enlace de la persona.',
+  })
+  resolverObjecion(@Param('id', ParseIntPipe) id: number, @Body() dto: ResolverObjecionDto, @CurrentUser('userId') userId: bigint) {
+    return this.objeciones.resolver(id, dto, userId);
   }
 
   // ── pagos reportados ──
@@ -148,5 +192,58 @@ export class CobrosController {
   @ApiOperation({ summary: 'Aplica un ingreso que ya está en tus cuentas como pago de una persona (sin crear otra transacción)' })
   aplicarIngreso(@Body() dto: AplicarIngresoDto, @CurrentUser('userId') userId: bigint) {
     return this.reportes.aplicarIngreso(dto, userId);
+  }
+}
+
+/** Medios de pago del propietario: lo que las personas ven en «¿Dónde puedes pagar?» de su enlace. */
+@ApiTags('Medios de pago')
+@ApiBearerAuth()
+@Controller('api/metodos-pago')
+export class MetodosPagoController {
+  constructor(private readonly metodos: MetodosPagoService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Tus medios de pago (activos e inactivos)' })
+  listar(@CurrentUser('userId') userId: bigint) {
+    return this.metodos.listar(userId);
+  }
+
+  @Post()
+  @HttpCode(201)
+  @ApiOperation({ summary: 'Agrega un medio de pago (cuenta, Nequi, Daviplata, llave Bre-B…)' })
+  crear(@Body() dto: CrearMetodoPagoDto, @CurrentUser('userId') userId: bigint) {
+    return this.metodos.crear(dto, userId);
+  }
+
+  @Patch(':id')
+  @ApiOperation({ summary: 'Cambia lo que se envía de un medio de pago (también activarlo o desactivarlo)' })
+  actualizar(@Param('id', ParseIntPipe) id: number, @Body() dto: ActualizarMetodoPagoDto, @CurrentUser('userId') userId: bigint) {
+    return this.metodos.actualizar(id, dto, userId);
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Elimina un medio de pago' })
+  eliminar(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
+    return this.metodos.eliminar(id, userId);
+  }
+
+  @Put(':id/qr')
+  @ApiOperation({ summary: 'Sube la imagen del QR (JPG, PNG o WebP, máx. 400 KB, en base64)' })
+  guardarQr(@Param('id', ParseIntPipe) id: number, @Body() dto: QrMetodoPagoDto, @CurrentUser('userId') userId: bigint) {
+    return this.metodos.guardarQr(id, dto, userId);
+  }
+
+  @Delete(':id/qr')
+  @ApiOperation({ summary: 'Quita el QR' })
+  quitarQr(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
+    return this.metodos.quitarQr(id, userId);
+  }
+
+  @Get(':id/qr')
+  @ApiOperation({ summary: 'Imagen del QR (vista previa del propietario)' })
+  async qr(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint, @Res({ passthrough: true }) res: Response) {
+    const q = await this.metodos.qr(id, userId);
+    res.set({ 'Content-Type': q.tipo, 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'", 'Cache-Control': 'private, no-store' });
+    return new StreamableFile(q.datos);
   }
 }

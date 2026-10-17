@@ -57,6 +57,8 @@ model Users {
   cobros_puntuales           CobrosPuntuales[]
   enlaces_cobro              EnlacesCobroPersona[]
   reportes_pago              ReportesPagoPersona[]
+  metodos_pago               MetodosPagoUsuario[]
+  objeciones_cobro           ObjecionesCobro[]
 }
 
 model linked_accounts {
@@ -99,6 +101,7 @@ model Personas {
   cobros_puntuales         CobrosPuntualesPersonas[]
   enlaces_cobro            EnlacesCobroPersona[]
   reportes_pago            ReportesPagoPersona[]
+  objeciones_cobro         ObjecionesCobro[]
   notificaciones           NotificacionesCorreo[]
 }
 
@@ -278,6 +281,7 @@ model CuentasFinancieras {
   aportes_detalle       AportesDetalle[]
   notificaciones        NotificacionesCorreo[]
   reportes_pago         ReportesPagoPersona[]
+  metodos_pago          MetodosPagoUsuario[]
 }
 
 model Categorias {
@@ -617,6 +621,7 @@ model MovimientosDeudaPersona {
   cobro_puntual      CobrosPuntuales?            @relation(fields: [cobro_puntual_id], references: [id])
 
   reportes_pago ReportesPagoPersona[]
+  objeciones_cobro ObjecionesCobro[]
 }
 
 /// Cargos o abonos mensuales recurrentes a una persona, vitalicios o por X meses (sql/002).
@@ -710,6 +715,7 @@ model EnlacesCobroPersona {
   persona Personas @relation(fields: [persona_id], references: [id])
 
   reportes ReportesPagoPersona[]
+  objeciones ObjecionesCobro[]
 
   @@unique([owner_user_id, persona_id, periodo])
 }
@@ -732,6 +738,7 @@ model ReportesPagoPersona {
   comprobante        Bytes?
   estado             String    @default("PENDIENTE") @db.VarChar
   monto_aprobado     Decimal?  @db.Decimal(15, 2)
+  saldo_al_reportar  Decimal?  @db.Decimal(15, 2)
   motivo_rechazo     String?
   cuenta_destino_id  BigInt?
   transaccion_id     BigInt?
@@ -745,6 +752,61 @@ model ReportesPagoPersona {
   cuenta_destino CuentasFinancieras?      @relation(fields: [cuenta_destino_id], references: [id])
   transaccion    Transacciones?           @relation(fields: [transaccion_id], references: [id])
   movimiento     MovimientosDeudaPersona? @relation(fields: [movimiento_id], references: [id])
+}
+
+/// Dónde puede pagarte cada persona (cuenta, Nequi, Daviplata, llave Bre-B…): se muestra en el enlace público con un botón «Copiar».
+model MetodosPagoUsuario {
+  id            BigInt   @id @default(autoincrement())
+  owner_user_id BigInt
+  tipo          String   @db.VarChar(20)
+  entidad       String   @db.VarChar(80)
+  numero        String   @db.VarChar(60)
+  titular       String?  @db.VarChar(120)
+  documento     String?  @db.VarChar(30)
+  instrucciones String?  @db.VarChar(500)
+  cuenta_id     BigInt?
+  qr            Bytes?
+  qr_tipo       String?  @db.VarChar(40)
+  qr_tamano     Int?
+  activo        Boolean  @default(true)
+  orden         Int      @default(0)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  owner  Users               @relation(fields: [owner_user_id], references: [id])
+  cuenta CuentasFinancieras? @relation(fields: [cuenta_id], references: [id])
+
+  @@index([owner_user_id, activo, orden], map: "idx_metodos_pago_owner")
+}
+
+/// La persona objeta un cobro (o el total) desde su enlace; el propietario la resuelve: mantiene, ajusta, excluye o descuenta.
+model ObjecionesCobro {
+  id              BigInt    @id @default(autoincrement())
+  owner_user_id   BigInt
+  enlace_id       BigInt
+  persona_id      BigInt
+  periodo         String    @db.Char(7)
+  alcance         String    @db.VarChar(5)
+  item_clave      String?   @db.VarChar(40)
+  item_concepto   String?   @db.VarChar(255)
+  item_monto      Decimal?  @db.Decimal(15, 2)
+  comentario      String    @db.VarChar(1000)
+  monto_propuesto Decimal?  @db.Decimal(15, 2)
+  estado          String    @default("ABIERTA") @db.VarChar(10)
+  resolucion      String?   @db.VarChar(12)
+  respuesta       String?   @db.VarChar(1000)
+  monto_ajuste    Decimal?  @db.Decimal(15, 2)
+  movimiento_id   BigInt?
+  resuelta_at     DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+
+  owner      Users                    @relation(fields: [owner_user_id], references: [id])
+  enlace     EnlacesCobroPersona      @relation(fields: [enlace_id], references: [id], onDelete: Cascade)
+  persona    Personas                 @relation(fields: [persona_id], references: [id])
+  movimiento MovimientosDeudaPersona? @relation(fields: [movimiento_id], references: [id])
+
+  @@index([owner_user_id, estado, created_at(sort: Desc)], map: "idx_objeciones_owner_estado")
+  @@index([enlace_id], map: "idx_objeciones_enlace")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

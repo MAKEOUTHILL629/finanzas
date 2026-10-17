@@ -19,6 +19,7 @@ const SIN_COMPROBANTE = {
   persona_id: true,
   periodo: true,
   monto_reportado: true,
+  saldo_al_reportar: true,
   fecha_pago: true,
   medio: true,
   referencia: true,
@@ -290,6 +291,8 @@ export class ReportesPagoService {
   }
 
   private vista(r: Reporte, correo: Awaited<ReturnType<ReportesPagoService['correoCoincidente']>>) {
+    const saldo = r.saldo_al_reportar === null ? null : toDecimal(r.saldo_al_reportar);
+    const parcial = saldo !== null && toDecimal(r.monto_reportado).lessThan(saldo);
     return {
       id: r.id,
       enlaceId: r.enlace_id,
@@ -297,6 +300,11 @@ export class ReportesPagoService {
       persona: r.persona.nombre,
       periodo: r.periodo,
       montoReportado: toDecimal(r.monto_reportado),
+      /** Lo que debía la persona cuando avisó su pago (`null` en los avisos anteriores a la fase 6). */
+      saldoAlReportar: saldo,
+      /** El aviso es por menos de lo que debía: queda `pendienteTrasPago` por cobrar. */
+      esParcial: parcial,
+      pendienteTrasPago: parcial && saldo ? money(saldo.minus(toDecimal(r.monto_reportado))) : null,
       fechaPago: r.fecha_pago,
       medio: r.medio,
       referencia: r.referencia,

@@ -1,12 +1,17 @@
 import { HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { parseIsoDate } from '../../common/utils/date.util';
 import { money, toDbMoney, toDecimal } from '../../common/utils/decimal.util';
+import { Decimal } from '../../config/decimal.config';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { LimiteTasa } from '../../common/utils/rate-limit.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { asegurarClaves } from './ajustes-cobro.util';
 import { validarComprobante } from './comprobante.util';
 import { ReportarPagoDto } from './dto/cobros.dto';
+import { ObjetarCobroDto } from './dto/cobros-fase6.dto';
 import { SnapshotCobro } from './enlaces-cobro.service';
+import { MetodosPagoService } from './metodos-pago.service';
+import { ObjecionesCobroService } from './objeciones-cobro.service';
 
 const MAX_PENDIENTES_POR_ENLACE = 8;
 const MAX_MONTO = 1_000_000_000;
@@ -23,7 +28,11 @@ const ENLACE_INVALIDO = 'Este enlace no es válido o ya venció. Pídele a quien
 export class CobroPublicoService {
   private readonly limite = new LimiteTasa();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly metodos: MetodosPagoService,
+    private readonly objeciones: ObjecionesCobroService,
+  ) {}
 
   async ver(token: string) {
     const enlace = await this.enlaceVigente(token);
@@ -38,9 +47,12 @@ export class CobroPublicoService {
       orderBy: { id: 'desc' },
       take: 10,
     });
-    const snapshot = enlace.snapshot as unknown as SnapshotCobro;
+    const snapshot = asegurarClaves(enlace.snapshot as unknown as SnapshotCobro);
+    const [metodosPago, objeciones] = await Promise.all([this.metodos.publicos(enlace.owner_user_id), this.objeciones.deLaPersona(enlace.id)]);
     return {
       ...snapshot,
+      metodosPago,
+      objeciones,
       mensaje: enlace.mensaje,
       instruccionesPago: enlace.instrucciones_pago,
       venceEn: enlace.expira_at,
@@ -76,6 +88,8 @@ export class CobroPublicoService {
     }
 
     const comprobante = dto.comprobante ? validarComprobante(dto.comprobante) : null;
+    // lo que debía al avisar: sirve para saber si es un abono parcial
+    const saldo = money(new Decimal((enlace.snapshot as unknown as SnapshotCobro)?.resumen?.saldoTotalAcumulado ?? 0));
     const r = await this.prisma.reportesPagoPersona.create({
       data: {
         owner_user_id: enlace.owner_user_id,
@@ -83,6 +97,7 @@ export class CobroPublicoService {
         persona_id: enlace.persona_id,
         periodo: enlace.periodo,
         monto_reportado: toDbMoney(monto),
+        saldo_al_reportar: saldo.greaterThan(0) ? toDbMoney(saldo) : null,
         fecha_pago: fecha,
         medio: dto.medio ?? null,
         referencia: dto.referencia?.trim() || null,
@@ -94,7 +109,31 @@ export class CobroPublicoService {
       },
       select: { id: true, estado: true, created_at: true },
     });
-    return { id: r.id, estado: r.estado, creadoEn: r.created_at, mensaje: 'Recibimos tu reporte. Quien te cobra lo revisará y lo confirmará.' };
+    const parcial = saldo.greaterThan(0) && monto.lessThan(saldo);
+    return {
+      id: r.id,
+      estado: r.estado,
+      creadoEn: r.created_at,
+      parcial,
+      saldoRestante: parcial ? money(saldo.minus(monto)) : null,
+      mensaje: parcial
+        ? 'Recibimos tu abono. Quien te cobra lo revisará y lo confirmará; el resto sigue pendiente.'
+        : 'Recibimos tu reporte. Quien te cobra lo revisará y lo confirmará.',
+    };
+  }
+
+  /** La persona observa un cobro (o el total): comentario obligatorio; queda pendiente de la respuesta del propietario. */
+  async objetar(token: string, dto: ObjetarCobroDto) {
+    const enlace = await this.enlaceVigente(token);
+    this.limitar(`objetar:${token}`, 10, 10 * 60_000);
+    return this.objeciones.crear(enlace, dto);
+  }
+
+  /** Imagen QR de un medio de pago activo del propietario del enlace. */
+  async qrMetodo(token: string, metodoId: number) {
+    const enlace = await this.enlaceVigente(token);
+    this.limitar(`qr:${token}`, 60, 60_000);
+    return this.metodos.qrPublico(metodoId, enlace.owner_user_id);
   }
 
   // ───────────────────────────── internos ─────────────────────────────
