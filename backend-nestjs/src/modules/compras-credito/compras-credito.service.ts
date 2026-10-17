@@ -6,6 +6,7 @@ import {
   calcularPagoMensualTotal,
   CuotaCalculada,
 } from '../../common/utils/calculadora-amortizacion.util';
+import { calcularAmortizacionFrancesa } from '../../common/utils/amortizacion-francesa.util';
 import { parseIsoDate, todayLocal } from '../../common/utils/date.util';
 import { money, rate, sumDecimals, toDb, toDbMoney, toDbRate, toDecimal } from '../../common/utils/decimal.util';
 import { dateToMillis, idNum, num, numOrNull, timestampToDayMillis } from '../../common/utils/legacy-format.util';
@@ -32,6 +33,19 @@ interface ValoresCompra {
   interes: Decimal;
 }
 
+/** Lo que se puede cambiar en línea desde el detalle: solo lo que viene. */
+export interface PatchCompraCreditoInput {
+  concepto?: string;
+  descripcion?: string;
+  estado?: string;
+  plasticoId?: number;
+  valorCompra?: number | string;
+  fechaCompra?: string;
+  numeroCuotas?: number;
+  interes?: number | string;
+  tarjeta?: number;
+}
+
 /** Forma JSON idéntica a `Json.writes[CompraCredito]` del legacy (+ campos multimoneda como extra). */
 export interface CompraCreditoJson {
   id: number;
@@ -55,6 +69,15 @@ export interface CompraCreditoJson {
   /** Plástico guardado en la compra (NULL en las anteriores a sql/004: el historial de la tarjeta lo deduce por fecha). */
   plasticoId: number | null;
   plasticoUltimos4: string | null;
+  /** La compra maestra que la unificó en un refinanciamiento (NULL = no fue unificada). */
+  refinanciamientoId: number | null;
+  /** La compra ES la obligación nueva de un refinanciamiento. */
+  esRefinanciamiento: boolean;
+  /** Capital pendiente que se llevó la maestra (solo en las unificadas). */
+  saldoRefinanciado: number | null;
+  /** CAPITAL_FIJO (compras normales) | FRANCES (cuota fija: los refinanciamientos). */
+  sistemaAmortizacion: string;
+  cuotaFijaPactada: number | null;
 }
 
 @Injectable()
@@ -93,6 +116,59 @@ export class ComprasCreditoService {
       include: { plastico: { select: { ultimos_4: true } } },
     });
     return compra ? this.toJson(compra, '', 0, compra.plastico?.ultimos_4 ?? null) : null;
+  }
+
+  // ───────────────────────────── PATCH parcial ─────────────────────────────
+
+  /**
+   * `PATCH /api/compras-credito/:id`: cambia SOLO lo enviado (edición en línea del detalle). Texto, estado y plástico son
+   * una actualización simple; valor, cuotas, interés, fecha o tarjeta recalculan las cuotas (Regla 4) y no se permiten en una compra
+   * ya unificada en un refinanciamiento.
+   */
+  async patchCompra(compraId: number, dto: PatchCompraCreditoInput, ownerUserId: bigint): Promise<CompraCreditoJson> {
+    const enviados = Object.entries(dto).filter(([, v]) => v !== undefined);
+    if (enviados.length === 0) throw datosInvalidos({ compra: ['No hay nada que cambiar'] });
+
+    await this.prisma.$transaction(async (tx) => {
+      const existente = await this.requireCompra(tx, compraId, ownerUserId);
+      if (dto.estado !== undefined && dto.estado.trim().toUpperCase() === 'REFINANCIADA') {
+        throw datosInvalidos({ estado: ['«Refinanciada» solo la asigna el asistente de unificación de deuda'] });
+      }
+      const financiero = dto.valorCompra !== undefined || dto.numeroCuotas !== undefined || dto.interes !== undefined || dto.fechaCompra !== undefined || dto.tarjeta !== undefined;
+      if (financiero) {
+        const fecha = existente.fecha_compra ? existente.fecha_compra.toISOString().slice(0, 10) : undefined;
+        await this.updateCompraTx(
+          tx,
+          compraId,
+          {
+            concepto: dto.concepto ?? existente.concepto ?? '',
+            valorCompra: dto.valorCompra ?? existente.valor_compra?.toString(),
+            fechaCompra: dto.fechaCompra ?? (fecha as string),
+            numeroCuotas: dto.numeroCuotas ?? existente.numero_cuotas ?? 1,
+            interes: dto.interes ?? existente.interes?.toString() ?? 0,
+            descripcion: dto.descripcion ?? existente.descripcion ?? '',
+            estado: dto.estado ?? existente.estado ?? 'Pendiente',
+            tarjeta: dto.tarjeta ?? (existente.tarjeta as bigint),
+            plasticoId: dto.plasticoId,
+          },
+          ownerUserId,
+        );
+        return;
+      }
+      const data: Prisma.ComprasCreditoUncheckedUpdateInput = {};
+      if (dto.concepto !== undefined) data.concepto = dto.concepto;
+      if (dto.descripcion !== undefined) data.descripcion = dto.descripcion;
+      if (dto.estado !== undefined) data.estado = dto.estado;
+      if (dto.plasticoId !== undefined) {
+        if (existente.tarjeta === null) throw datosInvalidos({ plasticoId: ['La compra no tiene tarjeta'] });
+        data.plastico_id = await resolverPlasticoCompra(tx, ownerUserId, existente.tarjeta, { plasticoId: dto.plasticoId, fecha: existente.fecha_compra });
+      }
+      await tx.comprasCredito.update({ where: { id: existente.id }, data });
+    }, TX_OPTIONS);
+
+    const actualizada = await this.getById(compraId, ownerUserId);
+    if (!actualizada) throw new Error(`No se encontró la compra con ID ${compraId}`);
+    return actualizada;
   }
 
   // ───────────────────────────── save ─────────────────────────────
@@ -167,6 +243,7 @@ export class ComprasCreditoService {
   async cambiarNumeroCuotasTx(tx: Tx, compraId: bigint | number, numeroCuotas: number, ownerUserId: bigint): Promise<ComprasCredito> {
     this.validarCuotas(numeroCuotas);
     const compra = await this.requireCompra(tx, Number(compraId), ownerUserId);
+    this.exigirNoUnificada(compra, 'cambiar sus cuotas');
     const actualizada = await tx.comprasCredito.update({ where: { id: compra.id }, data: { numero_cuotas: numeroCuotas } });
     await this.recalcularTx(tx, actualizada);
     return tx.comprasCredito.findUniqueOrThrow({ where: { id: compra.id } });
@@ -181,43 +258,48 @@ export class ComprasCreditoService {
   async updateCompra(compraId: number, input: CompraCreditoInput, ownerUserId: bigint): Promise<number> {
     this.validarCuotas(input.numeroCuotas);
 
-    return this.prisma.$transaction(async (tx) => {
-      const existente = await this.requireCompra(tx, compraId, ownerUserId);
-      const valores = this.resolverValores(input, existente);
+    return this.prisma.$transaction((tx) => this.updateCompraTx(tx, compraId, input, ownerUserId), TX_OPTIONS);
+  }
 
-      const tarjeta = await tx.tarjetas.findFirst({
-        where: { id: BigInt(input.tarjeta), owner_user_id: ownerUserId },
-        select: { id: true, tipo_tarjeta: true },
-      });
-      if (!tarjeta) throw new Error(`No se encontró la tarjeta con ID ${input.tarjeta}`);
-      if (tarjeta.tipo_tarjeta === 'DEBITO') throw datosInvalidos({ tarjeta: ['Las compras a crédito solo se registran en tarjetas de crédito'] });
+  /** Versión transaccional de `updateCompra` (la reutiliza el PATCH parcial). */
+  async updateCompraTx(tx: Tx, compraId: number, input: CompraCreditoInput, ownerUserId: bigint): Promise<number> {
+    this.validarCuotas(input.numeroCuotas);
+    const existente = await this.requireCompra(tx, compraId, ownerUserId);
+    this.exigirNoUnificada(existente, 'modificarla');
+    const valores = this.resolverValores(input, existente);
 
-      // El plástico solo cambia si el usuario lo eligió o si la compra se pasó a otra tarjeta; si no, se conserva (puede ser NULL).
-      const cambiaPlastico = (input.plasticoId !== undefined && input.plasticoId !== null) || existente.tarjeta !== tarjeta.id;
-      const plasticoId = cambiaPlastico
-        ? await resolverPlasticoCompra(tx, ownerUserId, tarjeta.id, { plasticoId: input.plasticoId, fecha: valores.fechaCompra })
-        : existente.plastico_id;
+    const tarjeta = await tx.tarjetas.findFirst({
+      where: { id: BigInt(input.tarjeta), owner_user_id: ownerUserId },
+      select: { id: true, tipo_tarjeta: true },
+    });
+    if (!tarjeta) throw new Error(`No se encontró la tarjeta con ID ${input.tarjeta}`);
+    if (tarjeta.tipo_tarjeta === 'DEBITO') throw datosInvalidos({ tarjeta: ['Las compras a crédito solo se registran en tarjetas de crédito'] });
 
-      const actualizada = await tx.comprasCredito.update({
-        where: { id: existente.id },
-        data: {
-          plastico_id: plasticoId,
-          concepto: input.concepto,
-          valor_compra: toDbMoney(valores.valorCompra),
-          fecha_compra: valores.fechaCompra,
-          numero_cuotas: input.numeroCuotas,
-          interes: toDbRate(valores.interes),
-          descripcion: input.descripcion,
-          estado: input.estado,
-          tarjeta: tarjeta.id,
-          moneda_original: valores.moneda,
-          valor_moneda_original: toDbMoney(valores.valorOriginal),
-          tasa_cambio_aplicada: toDbRate(valores.tasa),
-          trm_confirmada: valores.trmConfirmada,
-        },
-      });
-      return this.recalcularTx(tx, actualizada);
-    }, TX_OPTIONS);
+    // El plástico solo cambia si el usuario lo eligió o si la compra se pasó a otra tarjeta; si no, se conserva (puede ser NULL).
+    const cambiaPlastico = (input.plasticoId !== undefined && input.plasticoId !== null) || existente.tarjeta !== tarjeta.id;
+    const plasticoId = cambiaPlastico
+      ? await resolverPlasticoCompra(tx, ownerUserId, tarjeta.id, { plasticoId: input.plasticoId, fecha: valores.fechaCompra })
+      : existente.plastico_id;
+
+    const actualizada = await tx.comprasCredito.update({
+      where: { id: existente.id },
+      data: {
+        plastico_id: plasticoId,
+        concepto: input.concepto,
+        valor_compra: toDbMoney(valores.valorCompra),
+        fecha_compra: valores.fechaCompra,
+        numero_cuotas: input.numeroCuotas,
+        interes: toDbRate(valores.interes),
+        descripcion: input.descripcion,
+        estado: input.estado,
+        tarjeta: tarjeta.id,
+        moneda_original: valores.moneda,
+        valor_moneda_original: toDbMoney(valores.valorOriginal),
+        tasa_cambio_aplicada: toDbRate(valores.tasa),
+        trm_confirmada: valores.trmConfirmada,
+      },
+    });
+    return this.recalcularTx(tx, actualizada);
   }
 
   /**
@@ -227,6 +309,7 @@ export class ComprasCreditoService {
   async recalcularCuotas(compraId: number, ownerUserId: bigint): Promise<number> {
     return this.prisma.$transaction(async (tx) => {
       const compra = await this.requireCompra(tx, compraId, ownerUserId);
+      this.exigirNoUnificada(compra, 'recalcular sus cuotas');
       return this.recalcularTx(tx, compra);
     }, TX_OPTIONS);
   }
@@ -243,14 +326,11 @@ export class ComprasCreditoService {
     this.validarCuotas(numeroCuotas);
     if (!compra.fecha_compra) throw new Error('La compra no tiene fecha de compra');
 
-    const amortizacion = calcularAmortizacion(
-      valorCompra,
-      interes,
-      numeroCuotas,
-      compra.fecha_compra,
-      cobraInteresPrimeraCuota,
-      tarjeta?.dia_corte,
-    );
+    // Un refinanciamiento se amortiza como el banco (cuota fija, interés desde la primera cuota); las demás, con capital fijo.
+    const esFrances = compra.sistema_amortizacion === 'FRANCES';
+    const amortizacion = esFrances
+      ? calcularAmortizacionFrancesa(valorCompra, interes, numeroCuotas, compra.fecha_compra, tarjeta?.dia_corte, undefined, compra.cuota_fija_pactada ? toDecimal(compra.cuota_fija_pactada) : null)
+      : calcularAmortizacion(valorCompra, interes, numeroCuotas, compra.fecha_compra, cobraInteresPrimeraCuota, tarjeta?.dia_corte);
 
     await this.reemplazarCuotas(tx, compra.id, amortizacion);
 
@@ -258,7 +338,7 @@ export class ComprasCreditoService {
       where: { id: compra.id },
       data: {
         fecha_ultima_cuota: amortizacion[amortizacion.length - 1].fechaPago,
-        pago_mensual: toDb(calcularPagoMensualTotal(valorCompra, interes, numeroCuotas)),
+        pago_mensual: toDb(esFrances ? amortizacion[0].pagoTotal : calcularPagoMensualTotal(valorCompra, interes, numeroCuotas)),
       },
     });
     return resultado.count;
@@ -390,8 +470,18 @@ export class ComprasCreditoService {
   }
 
   /** Versión transaccional del borrado en cascada (la usa también el descarte de compras importadas por correo). */
-  async deleteTx(tx: Tx, compraId: number, ownerUserId: bigint): Promise<void> {
+  async deleteTx(tx: Tx, compraId: number, ownerUserId: bigint, opciones: { desdeDeshacer?: boolean } = {}): Promise<void> {
     const compra = await this.requireCompra(tx, compraId, ownerUserId);
+    if (!opciones.desdeDeshacer) {
+      this.exigirNoUnificada(compra, 'eliminarla');
+      const absorbidas = await tx.comprasCredito.count({ where: { refinanciamiento_id: compra.id } });
+      if (absorbidas > 0) {
+        throw new HttpException(
+          { message: `Esta compra es un refinanciamiento que unifica ${absorbidas} compra${absorbidas === 1 ? '' : 's'}: deshazlo primero para eliminarla` },
+          HttpStatus.CONFLICT,
+        );
+      }
+    }
 
     const cuotas = await tx.cuotasDetalle.findMany({ where: { compra: compra.id }, select: { id: true } });
     const responsables = await tx.responsablesComprasCredito.findMany({
@@ -463,6 +553,16 @@ export class ComprasCreditoService {
     const compra = await tx.comprasCredito.findFirst({ where: { id: BigInt(compraId), owner_user_id: ownerUserId } });
     if (!compra) throw new Error(`No se encontró la compra con ID ${compraId}`);
     return compra;
+  }
+
+  /** Una compra unificada en un refinanciamiento ya no se cobra por sí sola: cambiarle valor, cuotas o fecha rompería la trazabilidad. */
+  private exigirNoUnificada(compra: ComprasCredito, accion: string): void {
+    if (compra.refinanciamiento_id !== null && compra.refinanciamiento_id !== undefined) {
+      throw new HttpException(
+        { message: `Esta compra fue unificada en el refinanciamiento #${compra.refinanciamiento_id}: deshaz el refinanciamiento para ${accion}` },
+        HttpStatus.CONFLICT,
+      );
+    }
   }
 
   private validarCuotas(numeroCuotas: number): void {
@@ -553,7 +653,7 @@ export class ComprasCreditoService {
     if (!value.greaterThan(0)) throw datosInvalidos({ [campo]: [`${campo} debe ser mayor a 0`] });
   }
 
-  private cuotasData(compraId: bigint, cuotas: CuotaCalculada[]): Prisma.CuotasDetalleCreateManyInput[] {
+  cuotasData(compraId: bigint, cuotas: CuotaCalculada[]): Prisma.CuotasDetalleCreateManyInput[] {
     return cuotas.map((c) => ({
       numero_cuota: BigInt(c.numeroCuota),
       fecha_pago: c.fechaPago,
@@ -589,6 +689,11 @@ export class ComprasCreditoService {
       trmConfirmada: c.trm_confirmada,
       plasticoId: c.plastico_id === null || c.plastico_id === undefined ? null : idNum(c.plastico_id),
       plasticoUltimos4,
+      refinanciamientoId: c.refinanciamiento_id === null || c.refinanciamiento_id === undefined ? null : idNum(c.refinanciamiento_id),
+      esRefinanciamiento: c.es_refinanciamiento ?? false,
+      saldoRefinanciado: numOrNull(c.saldo_refinanciado),
+      sistemaAmortizacion: c.sistema_amortizacion ?? 'CAPITAL_FIJO',
+      cuotaFijaPactada: numOrNull(c.cuota_fija_pactada),
     };
   }
 }

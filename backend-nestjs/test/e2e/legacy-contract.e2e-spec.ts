@@ -239,6 +239,11 @@ describe('Contrato HTTP legacy', () => {
           trmConfirmada: true,
           plasticoId: null, // extras de sql/004: Angular los ignora
           plasticoUltimos4: null,
+          refinanciamientoId: null,
+          esRefinanciamiento: false,
+          saldoRefinanciado: null,
+          sistemaAmortizacion: 'CAPITAL_FIJO',
+          cuotaFijaPactada: null,
         },
       ]);
       expect(prisma.comprasCredito.findMany.mock.calls[0][0].where).toEqual({ owner_user_id: 7n });

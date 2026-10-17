@@ -315,6 +315,7 @@ export class PlasticosTarjetaService {
       FROM "CuotasDetalle" cd
       JOIN "ComprasCredito" cc ON cc.id = cd.compra
       WHERE cc.tarjeta = ${tarjetaId}::int8 AND cc.owner_user_id = ${ownerUserId}::int8
+        AND UPPER(COALESCE(cd.estado, '')) <> 'REFINANCIADA'
       GROUP BY cd.compra`);
   }
 

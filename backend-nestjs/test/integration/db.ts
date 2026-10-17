@@ -34,6 +34,7 @@ import { PrestamosService } from '../../src/modules/prestamos/prestamos.service'
 import { SubledgerDeudasService } from '../../src/modules/subledger-deudas/subledger-deudas.service';
 import { ProductosFinancierosService } from '../../src/modules/productos-financieros/productos-financieros.service';
 import { SugerenciasService } from '../../src/modules/sugerencias/sugerencias.service';
+import { RefinanciamientoService } from '../../src/modules/compras-credito/refinanciamiento.service';
 import { PlasticosTarjetaService } from '../../src/modules/tarjetas/plasticos-tarjeta.service';
 import { TarjetasService } from '../../src/modules/tarjetas/tarjetas.service';
 import { WebScrapingService } from '../../src/modules/tarjetas/web-scraping.service';
@@ -97,7 +98,9 @@ const QUITAR_ANTES_DE_MIGRAR = `
   ALTER TABLE "CuentasFinancieras" DROP COLUMN IF EXISTS es_generica, DROP COLUMN IF EXISTS fecha_inicio_uso, DROP COLUMN IF EXISTS fecha_fin_uso;
   -- 004 (plásticos de tarjeta); ComprasCredito.plastico_id apunta a TarjetaPlasticos: primero la columna.
   ALTER TABLE "ComprasCredito" DROP COLUMN IF EXISTS plastico_id;
-  DROP TABLE IF EXISTS "TarjetaPlasticos" CASCADE;`;
+  DROP TABLE IF EXISTS "TarjetaPlasticos" CASCADE;
+  -- 009 (refinanciamiento); al quitar refinanciamiento_id cae su FK y su CHECK
+  ALTER TABLE "ComprasCredito" DROP COLUMN IF EXISTS refinanciamiento_id, DROP COLUMN IF EXISTS es_refinanciamiento, DROP COLUMN IF EXISTS saldo_refinanciado, DROP COLUMN IF EXISTS sistema_amortizacion, DROP COLUMN IF EXISTS cuota_fija_pactada;`;
 
 let esquemaListo = false;
 
@@ -180,6 +183,9 @@ export interface Servicios {
   reportesPago: ReportesPagoService;
   cobroPublico: CobroPublicoService;
   sugerencias: SugerenciasService;
+  refinanciamientos: RefinanciamientoService;
+  cuotasTerceros: CuotasTercerosService;
+  pagosTarjeta: PagosService;
 }
 
 export async function crearServicios(): Promise<Servicios> {
@@ -233,6 +239,9 @@ export async function crearServicios(): Promise<Servicios> {
     reportesPago: new ReportesPagoService(prisma, enlacesCobro),
     cobroPublico: new CobroPublicoService(prisma),
     sugerencias: new SugerenciasService(prisma),
+    refinanciamientos: new RefinanciamientoService(prisma, compras),
+    cuotasTerceros,
+    pagosTarjeta: new PagosService(prisma),
   };
 }
 

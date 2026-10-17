@@ -125,6 +125,8 @@ guardar nada. Reversas: `sql/rollback_001_002.sql`, `sql/rollback_003.sql`.
 | `GET /api/productos-financieros/linea-tiempo` | Periodo de uso de cada tarjeta (por plástico) y cada cuenta, con movimientos y estado |
 | `GET /api/sugerencias/formularios` | Valores con los que arrancan los formularios (tarjeta de crédito/débito, cuenta, cuotas, personas) según tu historial reciente |
 | `GET /api/sugerencias/comercios?q=&limit=` | Comercios que ya usaste con lo habitual de cada uno (cuotas, tarjeta, categoría, cuenta, responsable) |
+| `GET /api/refinanciamientos/candidatas?tarjetaId=` · `POST /simular` · `POST /` · `GET/DELETE /:id` | Unificación de deuda de una tarjeta: compras con saldo, simulación (cuota francesa por tasa M.V./E.A. o cuota pactada), ejecución atómica, detalle (maestra ↔ absorbidas) y deshacer |
+| `PATCH /api/compras-credito/:id` | Edición en línea de una compra a crédito: solo cambia los campos enviados (texto/estado/plástico no tocan las cuotas; valor, cuotas o interés las recalculan) |
 | `GET /api/liquidacion-mensual/:periodo[/persona/:id]` | Cuánto debe cada persona a fin de mes (tarjetas, préstamos, recurrentes, cruces, cuota del carro, abonos) |
 | `POST /api/liquidacion-mensual/cruce-entre-personas` · `/registrar-pago` | Cruce directo y pago de fin de mes |
 

@@ -108,6 +108,7 @@ export class CuotasTercerosService {
         )
         AND ROUND((cd.pago_total * (rcc.porcentaje_pago / 100.0))::numeric, 2) > 0
         AND COALESCE(cc.concepto, '') NOT ILIKE '%ajuste de interes%'
+        AND UPPER(COALESCE(cd.estado, '')) <> 'REFINANCIADA' -- lo unificado se debe por la obligación nueva
         ${porPersona}
       ORDER BY rcc.persona, COALESCE(cd.periodo_facturacion, to_char(cd.fecha_pago, 'YYYY-MM')), cc.id, cd.numero_cuota`);
 

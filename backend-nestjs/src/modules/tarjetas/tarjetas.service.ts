@@ -450,6 +450,7 @@ export class TarjetasService {
       ) tr ON true
       WHERE t.owner_user_id = ${ownerUserId}::int8
         AND cd.periodo_facturacion = ${periodo}::char(7)
+        AND UPPER(COALESCE(cd.estado, '')) <> 'REFINANCIADA'
       GROUP BY t.id, t.franquicia, t.descripcion, t.dia_corte, t.dia_limite_pago, cd.periodo_facturacion`;
 
     const porPersona = await this.prisma.$queryRaw<Array<{ tarjeta_id: bigint; persona_id: bigint; nombre: string | null; monto: Prisma.Decimal }>>`
@@ -465,6 +466,7 @@ export class TarjetasService {
       JOIN "Personas" p ON p.id = rcc.persona
       WHERE cc.owner_user_id = ${ownerUserId}::int8
         AND cd.periodo_facturacion = ${periodo}::char(7)
+        AND UPPER(COALESCE(cd.estado, '')) <> 'REFINANCIADA'
         AND rcc.persona IS DISTINCT FROM (SELECT id FROM mi_persona)
       GROUP BY cc.tarjeta, p.id, p.nombre
       HAVING SUM(ROUND((cd.pago_total * (rcc.porcentaje_pago / 100.0))::numeric, 2)) > 0

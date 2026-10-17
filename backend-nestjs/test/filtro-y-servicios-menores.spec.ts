@@ -176,7 +176,7 @@ describe('Consultas de pagos, personas y pagos de tarjeta (SQL y formato)', () =
     const [fila] = await new PagosService(prisma).calcularPagoTarjetaCreditoDetalle(1, 2024, 4, OWNER);
     expect(fila).toEqual({ id: 5, numeroCuota: 3, fechaPago: 1714435200000, saldoRestante: 900, interesPagado: 10.5, aporteCapital: 100, pagoTotal: 110.5, compra: 2, estado: 'Pendiente', tarjeta: 1, concepto: 'Nevera', numeroCuotasTotal: 12 });
     const sql = sqlDe(prisma.$queryRaw);
-    expect(sql).toContain("cd.estado != 'Ajuste Interes'");
+    expect(sql).toContain("cd.estado NOT IN ('Ajuste Interes', 'REFINANCIADA')");
     expect(sql).toContain("DATE_TRUNC('month', cd.fecha_pago)");
     expect(prisma.$queryRaw.mock.calls[0].slice(1)).toEqual([2024, 4, 1n, OWNER]);
   });

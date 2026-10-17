@@ -266,6 +266,7 @@ export class DashboardService {
       WHERE cc.owner_user_id = ${ownerUserId}::int8
         AND cc.tarjeta IS NOT NULL
         AND ${PERIODO_CUOTA} IS NOT NULL
+        AND UPPER(COALESCE(cd.estado, '')) <> 'REFINANCIADA' -- las cuotas de compras unificadas las cubre la obligación nueva
       GROUP BY cc.tarjeta, ${PERIODO_CUOTA}`);
   }
 

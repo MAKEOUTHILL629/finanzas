@@ -188,10 +188,23 @@ model ComprasCredito {
   trm_confirmada        Boolean?
   /// Plástico con el que se hizo la compra, si se sabe (sql/004). NULL = no registrado (la API lo infiere por fecha).
   plastico_id           BigInt?
+  /// En una compra ABSORBIDA por un refinanciamiento: la compra maestra que la unificó (sql/009). NULL = no absorbida.
+  refinanciamiento_id   BigInt?
+  /// La compra es la obligación nueva que unifica a otras (sql/009).
+  es_refinanciamiento   Boolean   @default(false)
+  /// En una absorbida: el capital pendiente que se llevó la maestra.
+  saldo_refinanciado    Decimal?  @db.Decimal
+  /// CAPITAL_FIJO (compras normales) | FRANCES (cuota fija, como los refinanciamientos del banco).
+  sistema_amortizacion  String    @default("CAPITAL_FIJO") @db.VarChar(12)
+  /// Cuota que dio el banco cuando difiere de la calculada (incluye seguros o ajustes).
+  cuota_fija_pactada    Decimal?  @db.Decimal
 
   tarjeta_ref Tarjetas?         @relation(fields: [tarjeta], references: [id])
   owner       Users?            @relation(fields: [owner_user_id], references: [id])
   plastico    TarjetaPlasticos? @relation(fields: [plastico_id], references: [id])
+  /// La maestra que absorbió a esta compra y las compras que absorbió esta (si es maestra).
+  refinanciamiento ComprasCredito?  @relation("Refinanciamiento", fields: [refinanciamiento_id], references: [id], onDelete: SetNull)
+  absorbidas       ComprasCredito[] @relation("Refinanciamiento")
 
   cuotas           CuotasDetalle[]
   responsables     ResponsablesComprasCredito[]

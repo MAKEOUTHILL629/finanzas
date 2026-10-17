@@ -36,7 +36,7 @@ export class PagosService {
       SELECT cc.tarjeta AS tarjeta, cd.fecha_pago AS fecha_pago, SUM(cd.pago_total) AS valor_pago
       FROM "CuotasDetalle" cd
       JOIN "ComprasCredito" cc ON cd.compra = cc.id
-      WHERE cd.estado != 'Ajuste Interes'
+      WHERE cd.estado NOT IN ('Ajuste Interes', 'REFINANCIADA')
         AND cc.owner_user_id = ${ownerUserId}::int8
       GROUP BY cc.tarjeta, cd.fecha_pago
       ORDER BY cd.fecha_pago, cc.tarjeta`;
@@ -54,7 +54,7 @@ export class PagosService {
              cd.interes_pagado, cd.aporte_capital, cd.pago_total, cd.compra, cd.estado, cc.tarjeta
       FROM "CuotasDetalle" cd
       JOIN "ComprasCredito" cc ON cd.compra = cc.id
-      WHERE cd.estado != 'Ajuste Interes'
+      WHERE cd.estado NOT IN ('Ajuste Interes', 'REFINANCIADA')
         AND DATE_TRUNC('month', cd.fecha_pago) = DATE_TRUNC('month', make_date(${year}::int, ${mes}::int, 1))
         AND cc.tarjeta = ${BigInt(tarjetaId)}::int8
         AND cc.owner_user_id = ${ownerUserId}::int8

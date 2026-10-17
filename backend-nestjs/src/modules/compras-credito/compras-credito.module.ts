@@ -7,6 +7,8 @@ import { CuotasDetalleController } from './cuotas-detalle.controller';
 import { CuotasDetalleService } from './cuotas-detalle.service';
 import { PagosTarjetaController } from './pagos-tarjeta.controller';
 import { PagosService } from './pagos.service';
+import { RefinanciamientoService } from './refinanciamiento.service';
+import { RefinanciamientosController } from './refinanciamientos.controller';
 import { ResponsablesController } from './responsables.controller';
 import { ResponsablesService } from './responsables.service';
 
@@ -18,8 +20,9 @@ import { ResponsablesService } from './responsables.service';
     PagosTarjetaController,
     ComprasCreditoV2Controller,
     CuotasDetalleController,
+    RefinanciamientosController,
   ],
-  providers: [ComprasCreditoService, ComprasCreditoCsvService, CuotasDetalleService, PagosService, ResponsablesService],
-  exports: [ComprasCreditoService, PagosService, ResponsablesService],
+  providers: [ComprasCreditoService, ComprasCreditoCsvService, CuotasDetalleService, PagosService, RefinanciamientoService, ResponsablesService],
+  exports: [ComprasCreditoService, PagosService, RefinanciamientoService, ResponsablesService],
 })
 export class ComprasCreditoModule {}

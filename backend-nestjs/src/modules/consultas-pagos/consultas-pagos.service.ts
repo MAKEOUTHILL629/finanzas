@@ -79,6 +79,7 @@ export class ConsultasPagosService {
         AND cc.owner_user_id = ${ownerUserId}::int8
         AND DATE_TRUNC('month', cd.fecha_pago) = DATE_TRUNC('month', make_date(${year}::int, ${mes}::int, 1))
         AND cc.concepto NOT LIKE '%Ajuste de Interes%'
+        AND UPPER(COALESCE(cd.estado, '')) <> 'REFINANCIADA'
       ORDER BY p.id, cc.id, cd.fecha_pago`;
     return rows.map((r) => ({
       persona: idNum(r.persona_id),

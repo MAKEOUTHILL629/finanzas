@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Length, Matches, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsPositive, IsString, Length, Matches, Max, MaxLength, Min } from 'class-validator';
 import { IsMoney } from '../../../common/validators/is-money.decorator';
+import { EnteroOpcional, VacioAUndefined } from '../../../common/validators/normalizar-opcional.decorator';
 
 /**
  * Entrada de dominio para crear/actualizar una compra (la usan el controlador JSON y el cargador CSV).
@@ -110,4 +111,71 @@ export class ConfirmarTrmDto {
   @IsOptional()
   @IsBoolean()
   confirmarDefinitivo?: boolean;
+}
+
+
+/**
+ * `PATCH /api/compras-credito/:id` — edición en línea del detalle: solo se envía lo que cambió. Texto, estado y plástico son
+ * una actualización simple; valor, cuotas, interés, fecha o tarjeta recalculan las cuotas.
+ */
+export class PatchCompraCreditoDto {
+  @ApiPropertyOptional({ example: 'Nevera Samsung' })
+  @VacioAUndefined()
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  concepto?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  descripcion?: string;
+
+  @ApiPropertyOptional({ example: 'Pendiente' })
+  @VacioAUndefined()
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  estado?: string;
+
+  @ApiPropertyOptional({ description: 'Plástico con el que se pagó (debe ser de la tarjeta de la compra)' })
+  @EnteroOpcional()
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  plasticoId?: number;
+
+  @ApiPropertyOptional({ example: '2500000' })
+  @VacioAUndefined()
+  @IsOptional()
+  @IsMoney({ maxDecimals: 2, positive: true })
+  valorCompra?: number | string;
+
+  @ApiPropertyOptional({ example: '2026-10-15' })
+  @VacioAUndefined()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}/, { message: 'fechaCompra debe tener formato yyyy-MM-dd' })
+  fechaCompra?: string;
+
+  @ApiPropertyOptional({ example: 12 })
+  @EnteroOpcional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(120)
+  numeroCuotas?: number;
+
+  @ApiPropertyOptional({ example: '1.8895', description: 'Interés mensual en %' })
+  @VacioAUndefined()
+  @IsOptional()
+  @IsMoney({ maxDecimals: 4 })
+  interes?: number | string;
+
+  @ApiPropertyOptional({ description: 'ID de la tarjeta de crédito' })
+  @EnteroOpcional()
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  tarjeta?: number;
 }

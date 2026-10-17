@@ -205,6 +205,7 @@ export class SubledgerDeudasService {
         JOIN "ComprasCredito" cc ON cc.id = cd.compra
         WHERE cc.owner_user_id = ${ownerUserId}::int8
           AND cd.periodo_facturacion = ${periodo}::char(7)
+          AND UPPER(COALESCE(cd.estado, '')) <> 'REFINANCIADA'
       ),
       recurrentes_mes AS (
         SELECT

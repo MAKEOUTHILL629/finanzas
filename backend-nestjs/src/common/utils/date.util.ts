@@ -25,6 +25,12 @@ export function todayLocal(now: Date = new Date()): Date {
   return utcDate(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
+/** «Hoy» en Colombia (UTC-5, sin horario de verano): el día no depende de la zona horaria del servidor. */
+export function hoyBogota(now: Date = new Date()): Date {
+  const b = new Date(now.getTime() - 5 * 3_600_000);
+  return utcDate(b.getUTCFullYear(), b.getUTCMonth(), b.getUTCDate());
+}
+
 export function endOfMonth(date: Date): Date {
   return utcDate(date.getUTCFullYear(), date.getUTCMonth() + 1, 0);
 }
