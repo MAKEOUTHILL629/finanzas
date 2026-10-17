@@ -224,6 +224,8 @@ export class ObjecionesCobroService {
     return {
       id: o.id,
       alcance: o.alcance,
+      /** Identifica el renglón observado (la persona ya lo ve en su detalle): sirve para marcar cuáles tienen una observación abierta. */
+      itemClave: o.alcance === 'ITEM' ? o.item_clave : null,
       concepto: o.alcance === 'ITEM' ? o.item_concepto : null,
       monto: o.item_monto === null ? null : toDecimal(o.item_monto),
       comentario: o.comentario,
@@ -244,7 +246,6 @@ export class ObjecionesCobroService {
       personaId: o.persona_id,
       persona: o.persona.nombre,
       periodo: o.periodo,
-      itemClave: o.item_clave,
       movimientoId: o.movimiento_id,
     };
   }

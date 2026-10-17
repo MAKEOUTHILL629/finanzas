@@ -329,6 +329,8 @@ describeDb('Integración BD — enlace de cobro, fase 6', () => {
       expect(parcial.mensaje).toContain('abono');
       const completo: any = await s.cobroPublico.reportar(token, { monto: 61500, fechaPago: hoy() } as any);
       expect(completo).toMatchObject({ parcial: false, saldoRestante: null });
+      const vistos: any = await s.cobroPublico.ver(token); // la persona también ve cuál de sus avisos fue parcial
+      expect(vistos.reportes.map((r: any) => [Number(r.id), r.parcial]).sort()).toEqual([[Number(parcial.id), true], [Number(completo.id), false]].sort());
 
       const lista: any[] = await s.reportesPago.listar(semilla.userId);
       const p = lista.find((r) => Number(r.id) === Number(parcial.id));

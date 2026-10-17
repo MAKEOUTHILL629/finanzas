@@ -43,7 +43,7 @@ export class CobroPublicoService {
 
     const reportes = await this.prisma.reportesPagoPersona.findMany({
       where: { enlace_id: enlace.id },
-      select: { id: true, monto_reportado: true, fecha_pago: true, estado: true, motivo_rechazo: true, monto_aprobado: true, created_at: true, comprobante_tamano: true },
+      select: { id: true, monto_reportado: true, saldo_al_reportar: true, fecha_pago: true, estado: true, motivo_rechazo: true, monto_aprobado: true, created_at: true, comprobante_tamano: true },
       orderBy: { id: 'desc' },
       take: 10,
     });
@@ -64,6 +64,8 @@ export class CobroPublicoService {
         estado: r.estado,
         motivoRechazo: r.estado === 'RECHAZADO' ? r.motivo_rechazo : null,
         montoAprobado: r.monto_aprobado === null ? null : toDecimal(r.monto_aprobado),
+        /** Avisó menos de lo que debía en ese momento: el resto sigue pendiente. */
+        parcial: r.saldo_al_reportar !== null && toDecimal(r.monto_reportado).lessThan(toDecimal(r.saldo_al_reportar)),
         creadoEn: r.created_at,
         conComprobante: r.comprobante_tamano !== null,
       })),
