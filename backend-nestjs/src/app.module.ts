@@ -26,6 +26,7 @@ import { PersonasModule } from './modules/personas/personas.module';
 import { PrestamosModule } from './modules/prestamos/prestamos.module';
 import { TarjetasModule } from './modules/tarjetas/tarjetas.module';
 import { ProductosFinancierosModule } from './modules/productos-financieros/productos-financieros.module';
+import { SugerenciasModule } from './modules/sugerencias/sugerencias.module';
 import { PrismaModule } from './prisma/prisma.module';
 
 /** Aplana los errores de class-validator a `{ campo: [mensajes] }` (cuerpo 400 legacy: `{message:"Datos inválidos", errors}`). */
@@ -49,6 +50,7 @@ function flattenValidationErrors(errors: ValidationError[], prefix = ''): Record
     PersonasModule,
     TarjetasModule,
     ProductosFinancierosModule,
+    SugerenciasModule,
     ComprasCreditoModule,
     ConsultasPagosModule,
     PrestamosModule,

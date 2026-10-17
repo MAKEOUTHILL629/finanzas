@@ -33,6 +33,7 @@ import { RecurrentesPersonaService } from '../../src/modules/recurrentes-persona
 import { PrestamosService } from '../../src/modules/prestamos/prestamos.service';
 import { SubledgerDeudasService } from '../../src/modules/subledger-deudas/subledger-deudas.service';
 import { ProductosFinancierosService } from '../../src/modules/productos-financieros/productos-financieros.service';
+import { SugerenciasService } from '../../src/modules/sugerencias/sugerencias.service';
 import { PlasticosTarjetaService } from '../../src/modules/tarjetas/plasticos-tarjeta.service';
 import { TarjetasService } from '../../src/modules/tarjetas/tarjetas.service';
 import { WebScrapingService } from '../../src/modules/tarjetas/web-scraping.service';
@@ -178,6 +179,7 @@ export interface Servicios {
   enlacesCobro: EnlacesCobroService;
   reportesPago: ReportesPagoService;
   cobroPublico: CobroPublicoService;
+  sugerencias: SugerenciasService;
 }
 
 export async function crearServicios(): Promise<Servicios> {
@@ -230,6 +232,7 @@ export async function crearServicios(): Promise<Servicios> {
     enlacesCobro,
     reportesPago: new ReportesPagoService(prisma, enlacesCobro),
     cobroPublico: new CobroPublicoService(prisma),
+    sugerencias: new SugerenciasService(prisma),
   };
 }
 

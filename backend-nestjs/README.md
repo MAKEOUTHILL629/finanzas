@@ -123,6 +123,8 @@ guardar nada. Reversas: `sql/rollback_001_002.sql`, `sql/rollback_003.sql`.
 | `GET/POST/PATCH/DELETE /api/recurrentes-persona` · `POST /generar-mes/:periodo` | Cargos/abonos mensuales por persona, de por vida o por X meses (idempotente) |
 | `POST /api/tarjetas` · `POST /api/tarjetas/:id/plasticos` | Crea una tarjeta de crédito o de débito (la de débito exige `cuentaId`), o con `plasticoAnteriorId` renueva un plástico; agrega un plástico anterior sin cambiar el vigente |
 | `GET /api/productos-financieros/linea-tiempo` | Periodo de uso de cada tarjeta (por plástico) y cada cuenta, con movimientos y estado |
+| `GET /api/sugerencias/formularios` | Valores con los que arrancan los formularios (tarjeta de crédito/débito, cuenta, cuotas, personas) según tu historial reciente |
+| `GET /api/sugerencias/comercios?q=&limit=` | Comercios que ya usaste con lo habitual de cada uno (cuotas, tarjeta, categoría, cuenta, responsable) |
 | `GET /api/liquidacion-mensual/:periodo[/persona/:id]` | Cuánto debe cada persona a fin de mes (tarjetas, préstamos, recurrentes, cruces, cuota del carro, abonos) |
 | `POST /api/liquidacion-mensual/cruce-entre-personas` · `/registrar-pago` | Cruce directo y pago de fin de mes |
 
