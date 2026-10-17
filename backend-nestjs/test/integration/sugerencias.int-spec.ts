@@ -127,9 +127,9 @@ describeDb('Integración BD — sugerencias de formularios', () => {
 
   it('comercios: junta compras y egresos, resume lo habitual y filtra por texto', async () => {
     const nuevaTarjeta = await tarjeta('Visa nueva');
-    await compra('DL*DIDI FOOD CO', semilla.tarjetaId, 30, { numero_cuotas: 1 });
-    const c2 = await compra('Didi Food', semilla.tarjetaId, 10, { numero_cuotas: 1 });
-    await compra('Didi Food', nuevaTarjeta.id, 3, { numero_cuotas: 3 });
+    await compra('DL*DIDI FOOD CO', semilla.tarjetaId, 30, { numero_cuotas: 1, valor_compra: '30000' });
+    const c2 = await compra('Didi Food', semilla.tarjetaId, 10, { numero_cuotas: 1, valor_compra: '45500.50' });
+    await compra('Didi Food', nuevaTarjeta.id, 3, { numero_cuotas: 3, valor_compra: '52000' });
     await s.prisma.responsablesComprasCredito.create({ data: { persona: BigInt(semilla.andresId), porcentaje_pago: '100', cantidad_pago: '1000', cantidad_cuotas: 1, compra_credito: c2.id } });
     const categoria = await s.prisma.categorias.create({ data: { owner_user_id: semilla.userId, nombre: 'Restaurantes', tipo: 'EGRESO' } });
     await s.prisma.transacciones.create({
@@ -139,7 +139,7 @@ describeDb('Integración BD — sugerencias de formularios', () => {
 
     const todos = await s.sugerencias.comercios(semilla.userId);
     expect(todos.map((c) => [c.concepto, c.veces])).toEqual([['Didi Food', 4], ['Éxito', 1]]);
-    expect(todos[0]).toMatchObject({ cuotas: 1, tarjetaId: semilla.tarjetaId, personaId: semilla.andresId, categoriaId: Number(categoria.id), cuentaId: semilla.nequiId });
+    expect(todos[0]).toMatchObject({ cuotas: 1, ultimoValor: 52000, tarjetaId: semilla.tarjetaId, personaId: semilla.andresId, categoriaId: Number(categoria.id), cuentaId: semilla.nequiId });
 
     expect((await s.sugerencias.comercios(semilla.userId, { q: 'exito' })).map((c) => c.concepto)).toEqual(['Éxito']);
     expect(await s.sugerencias.comercios(semilla.userId, { limit: 1 })).toHaveLength(1);

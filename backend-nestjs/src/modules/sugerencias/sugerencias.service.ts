@@ -112,7 +112,7 @@ export class SugerenciasService {
     const [compras, movimientos] = await Promise.all([
       this.prisma.comprasCredito.findMany({
         where: { owner_user_id: ownerUserId, concepto: { not: null } },
-        select: { concepto: true, numero_cuotas: true, tarjeta: true, fecha_compra: true, responsables: { select: { persona: true } } },
+        select: { concepto: true, valor_compra: true, numero_cuotas: true, tarjeta: true, fecha_compra: true, responsables: { select: { persona: true } } },
         orderBy: [{ fecha_compra: 'desc' }, { id: 'desc' }],
         take: 4000,
       }),
@@ -126,6 +126,7 @@ export class SugerenciasService {
     return agruparComercios(
       compras.map((c) => ({
         concepto: c.concepto,
+        valor: c.valor_compra === null ? null : Number(c.valor_compra),
         numeroCuotas: c.numero_cuotas,
         tarjetaId: num(c.tarjeta),
         fecha: c.fecha_compra,

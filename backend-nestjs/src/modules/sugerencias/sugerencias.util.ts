@@ -47,6 +47,8 @@ export function ordenarPorUso<T>(usos: ReadonlyArray<Uso<T>>): T[] {
 
 export interface CompraHistorica {
   concepto: string | null;
+  /** Valor de la compra en COP. */
+  valor?: number | null;
   numeroCuotas: number | null;
   tarjetaId: number | null;
   fecha: Date | null;
@@ -70,6 +72,8 @@ export interface ComercioHabitual {
   ultimaFecha: string | null;
   /** Cuotas con las que suele comprar ahí. */
   cuotas: number | null;
+  /** Lo que costó la última compra a crédito ahí (una suscripción o un mercado casi igual cada vez). */
+  ultimoValor: number | null;
   tarjetaId: number | null;
   categoriaId: number | null;
   cuentaId: number | null;
@@ -79,6 +83,7 @@ export interface ComercioHabitual {
 interface Registro {
   concepto: string;
   tiempo: number;
+  valor: number | null;
   cuotas: number | null;
   tarjetaId: number | null;
   categoriaId: number | null;
@@ -109,12 +114,12 @@ export function agruparComercios(
   for (const c of compras) {
     const clave = normalizarComercio(c.concepto);
     if (!clave || !c.concepto) continue;
-    agregar(clave, { concepto: c.concepto.trim(), tiempo: aTiempo(c.fecha), cuotas: c.numeroCuotas, tarjetaId: c.tarjetaId, categoriaId: null, cuentaId: null, personas: c.personas });
+    agregar(clave, { concepto: c.concepto.trim(), tiempo: aTiempo(c.fecha), valor: c.valor ?? null, cuotas: c.numeroCuotas, tarjetaId: c.tarjetaId, categoriaId: null, cuentaId: null, personas: c.personas });
   }
   for (const m of movimientos) {
     const clave = normalizarComercio(m.concepto);
     if (!clave || !m.concepto) continue;
-    agregar(clave, { concepto: m.concepto.trim(), tiempo: aTiempo(m.fecha), cuotas: null, tarjetaId: null, categoriaId: m.categoriaId, cuentaId: m.cuentaId, personas: [] });
+    agregar(clave, { concepto: m.concepto.trim(), tiempo: aTiempo(m.fecha), valor: null, cuotas: null, tarjetaId: null, categoriaId: m.categoriaId, cuentaId: m.cuentaId, personas: [] });
   }
 
   const buscado = filtro ? normalizarParaBuscar(filtro) : '';
@@ -129,6 +134,7 @@ export function agruparComercios(
       veces: registros.length,
       ultimaFecha: aDia(recientes[0].tiempo),
       cuotas: moda(recientes.map((r) => r.cuotas)),
+      ultimoValor: recientes.find((r) => r.valor !== null && r.valor > 0)?.valor ?? null,
       tarjetaId: moda(recientes.map((r) => r.tarjetaId)),
       categoriaId: moda(recientes.map((r) => r.categoriaId)),
       cuentaId: moda(recientes.map((r) => r.cuentaId)),

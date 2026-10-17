@@ -1,7 +1,8 @@
 import { agruparComercios, moda, normalizarParaBuscar, ordenarPorUso } from '../src/modules/sugerencias/sugerencias.util';
 
-const compra = (concepto: string | null, fecha: string, extra: Partial<{ numeroCuotas: number | null; tarjetaId: number | null; personas: number[] }> = {}) => ({
+const compra = (concepto: string | null, fecha: string, extra: Partial<{ numeroCuotas: number | null; tarjetaId: number | null; personas: number[]; valor: number | null }> = {}) => ({
   concepto,
+  valor: 1000,
   numeroCuotas: 1,
   tarjetaId: 2,
   fecha: new Date(`${fecha}T00:00:00Z`),
@@ -70,6 +71,17 @@ describe('agruparComercios', () => {
     );
     expect(r).toHaveLength(1);
     expect(r[0]).toMatchObject({ veces: 5, cuotas: 12, tarjetaId: 1, personaId: 2, categoriaId: 7, cuentaId: 9 });
+  });
+
+  it('ultimoValor es lo que costó la compra más reciente (ignora valores vacíos y los egresos)', () => {
+    const r = agruparComercios(
+      [compra('Youtube', '2026-08-01', { valor: 24900 }), compra('Youtube', '2026-10-01', { valor: 27900 }), compra('Youtube', '2026-09-01', { valor: 25900 }), compra('Spotify', '2026-10-02', { valor: null }), compra('Tienda', '2026-10-03', { valor: 0 })],
+      [egreso('Youtube', '2026-10-05'), egreso('Spotify', '2026-10-06')],
+    );
+    const por = (c: string) => r.find((x) => x.concepto === c)?.ultimoValor;
+    expect(por('Youtube')).toBe(27900); // la compra de octubre, no el egreso más nuevo ni la de agosto
+    expect(por('Spotify')).toBeNull();
+    expect(por('Tienda')).toBeNull();
   });
 
   it('una persona cuenta una vez por compra aunque figure repetida', () => {
