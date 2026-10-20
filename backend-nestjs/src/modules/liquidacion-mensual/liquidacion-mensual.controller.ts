@@ -25,6 +25,34 @@ export class LiquidacionMensualController {
     return this.liquidacion.registrarPago(dto, userId);
   }
 
+  @Get(':periodo/bilateral')
+  @ApiOperation({ summary: 'Cámara bilateral A vs B (Fase 4): dos columnas, saldo anterior como fila #1 y neto a enviar' })
+  bilateral(@Param('periodo') periodo: string, @Query('personaId', ParseIntPipe) personaId: number, @CurrentUser('userId') userId: bigint) {
+    return this.liquidacion.bilateral(periodo, personaId, userId);
+  }
+
+  @Post(':periodo/cerrar-cruce')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Cierra el mes: liquida y paga el total, o cierra arrastrando el saldo al periodo siguiente (Fase 4)' })
+  cerrarCruce(
+    @Param('periodo') periodo: string,
+    @Body() dto: { personaId: number; modo: 'LIQUIDAR_Y_PAGAR_TOTAL' | 'CERRAR_Y_ARRASTRAR_SALDO'; cuentaDestinoId?: number },
+    @CurrentUser('userId') userId: bigint,
+  ) {
+    return this.liquidacion.cerrarCruce(periodo, dto.personaId, dto.modo, userId, dto.cuentaDestinoId);
+  }
+
+  @Post(':periodo/multa')
+  @HttpCode(201)
+  @ApiOperation({ summary: 'Registra una multa de convivencia (ej. «Multa por no anotar») a una persona en el periodo (Fase 4)' })
+  multa(
+    @Param('periodo') periodo: string,
+    @Body() dto: { personaId: number; monto: number | string; concepto?: string },
+    @CurrentUser('userId') userId: bigint,
+  ) {
+    return this.liquidacion.registrarMulta(periodo, dto.personaId, dto.monto, userId, dto.concepto);
+  }
+
   @Get(':periodo')
   @ApiOperation({
     summary:

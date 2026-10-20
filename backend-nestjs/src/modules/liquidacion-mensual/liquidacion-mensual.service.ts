@@ -11,6 +11,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { calcularEstadoPeriodo } from '../obligaciones-aportes/aportes-carro.calc';
 import { RecurrentesPersonaService } from '../recurrentes-persona/recurrentes-persona.service';
 import { SubledgerDeudasService } from '../subledger-deudas/subledger-deudas.service';
+import { addMesesPeriodo } from '../../common/utils/periodo.util';
+import { construirBilateral, ItemCrudoLiquidacion } from './bilateral.util';
 import { CruceEntrePersonasDto, RegistrarPagoMesDto } from './dto/liquidacion.dto';
 import { CuotasTercerosService, CuotaTercero, estadoDeCuota } from './cuotas-terceros.service';
 
@@ -103,6 +105,8 @@ export function origenDeMovimiento(m: Pick<Movimiento, 'tipo_movimiento' | 'cruc
       return 'PAGO_RECIBIDO';
     case TipoMovimientoDeuda.AJUSTE_DESCUENTO:
       return 'DESCUENTO';
+    case TipoMovimientoDeuda.MULTA_CONVIVENCIA:
+      return 'OTRO';
     default:
       return 'OTRO';
   }
@@ -200,6 +204,69 @@ export class LiquidacionMensualService {
   async liquidacionPersona(periodo: string, personaId: number, ownerUserId: bigint) {
     const r = await this.liquidacion(periodo, ownerUserId, { personaId });
     return { periodo, ...r.personas[0] };
+  }
+
+  /** Vista bilateral A vs B (Fase 4): dos columnas espejo con saldo anterior como fila #1 y trazabilidad de división. */
+  async bilateral(periodo: string, personaId: number, ownerUserId: bigint) {
+    const l = await this.liquidacionPersona(periodo, personaId, ownerUserId);
+    const bloques = [l.cuotasTarjetas, l.cuotasPrestamos, l.cargosRecurrentes, l.cobrosPuntuales, l.crucesCuentas, l.saldoAFavorAplicado, l.abonosRealizados, l.otros];
+    const items: ItemCrudoLiquidacion[] = bloques.flatMap((b) =>
+      b.items.map((i) => ({
+        id: i.id,
+        fecha: i.fecha,
+        concepto: i.concepto,
+        origen: i.origen,
+        signo: i.signo,
+        monto: i.monto,
+        detalle: i.detalle ? { valorCompra: i.detalle.tipo === 'CUOTA_TARJETA' ? i.detalle.valorCompra : null, montoTotal: i.detalle.tipo === 'COBRO_PUNTUAL' ? i.detalle.montoTotal : null, valorCuotaTotal: i.detalle.tipo === 'CUOTA_TARJETA' ? i.detalle.valorCuotaTotal : null, porcentaje: i.detalle.tipo === 'CUOTA_TARJETA' ? i.detalle.porcentaje : null, modoDivision: i.detalle.tipo === 'COBRO_PUNTUAL' ? i.detalle.modoDivision : null } : null,
+      })),
+    );
+    const camara = construirBilateral({ saldoAnterior: l.saldoAnterior, items });
+    return { periodo, persona: l.persona, ...camara, resumenNetoMes: l.resumenNeto };
+  }
+
+  /**
+   * Cierre de mes (Fase 4): LIQUIDAR_Y_PAGAR_TOTAL registra el pago del neto y deja el siguiente mes en $0;
+   * CERRAR_Y_ARRASTRAR_SALDO no mueve dinero: el saldo queda como fila «Saldo Anterior» del periodo siguiente
+   * (el arrastre ya es el comportamiento del sub-ledger: `saldoAnterior` suma los periodos previos confirmados).
+   */
+  async cerrarCruce(periodo: string, personaId: number, modo: 'LIQUIDAR_Y_PAGAR_TOTAL' | 'CERRAR_Y_ARRASTRAR_SALDO', ownerUserId: bigint, cuentaDestinoId?: number) {
+    if (!isValidPeriodo(periodo)) throw datosInvalidos({ periodo: ['periodo debe tener formato YYYY-MM'] });
+    const camara = await this.bilateral(periodo, personaId, ownerUserId);
+    const neto = camara.netoAEnviar;
+    const siguiente = addMesesPeriodo(periodo, 1);
+    if (modo === 'CERRAR_Y_ARRASTRAR_SALDO') {
+      return { periodo, modo, personaId, netoArrastrado: neto, periodoSiguiente: siguiente, saldoAnteriorSiguiente: neto };
+    }
+    if (neto.isZero()) return { periodo, modo, personaId, netoArrastrado: new Decimal(0), periodoSiguiente: siguiente, saldoAnteriorSiguiente: new Decimal(0), pagoRegistrado: null };
+    // Solo se liquida con pago cuando la contraparte debe; si el neto es del usuario, el pago lo hace él fuera de este flujo.
+    if (neto.isNegative()) throw datosInvalidos({ modo: ['El neto es a favor de la contraparte: registra tú el pago desde Transacciones y luego cierra arrastrando si queda saldo'] });
+    const pago = await this.registrarPago({ personaId, monto: neto.toString(), periodo, cuentaDestinoId, concepto: `Liquidación total ${periodo}` }, ownerUserId);
+    return { periodo, modo, personaId, netoArrastrado: new Decimal(0), periodoSiguiente: siguiente, saldoAnteriorSiguiente: new Decimal(0), pagoRegistrado: pago };
+  }
+
+  /** Multa de convivencia con 1 clic (Fase 4): cargo confirmado en el sub-ledger de la persona. */
+  async registrarMulta(periodo: string, personaId: number, montoEntrada: number | string, ownerUserId: bigint, concepto = 'Multa por no anotar') {
+    if (!isValidPeriodo(periodo)) throw datosInvalidos({ periodo: ['periodo debe tener formato YYYY-MM'] });
+    const monto = money(toDecimal(montoEntrada));
+    if (!monto.greaterThan(0)) throw datosInvalidos({ monto: ['monto debe ser mayor a 0'] });
+    const movimiento = await this.prisma.$transaction(async (tx) => {
+      await assertPersona(tx, personaId, ownerUserId);
+      return tx.movimientosDeudaPersona.create({
+        data: {
+          owner_user_id: ownerUserId,
+          persona_id: BigInt(personaId),
+          fecha_movimiento: todayLocal(),
+          periodo_imputacion: periodo,
+          tipo_movimiento: TipoMovimientoDeuda.MULTA_CONVIVENCIA,
+          signo: 1,
+          monto: toDbMoney(monto),
+          concepto: concepto.slice(0, 255),
+          estado: EstadoMovimientoDeuda.CONFIRMADO,
+        },
+      });
+    });
+    return { movimientoId: Number(movimiento.id), personaId, monto, periodo, tipoMovimiento: TipoMovimientoDeuda.MULTA_CONVIVENCIA };
   }
 
   /** `POST /cruce-entre-personas`: abona a una persona y carga a la otra en una sola operación (Trigger 5). */

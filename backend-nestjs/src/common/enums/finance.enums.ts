@@ -135,6 +135,8 @@ export enum TipoMovimientoDeuda {
   ABONO_SALDO_FAVOR_CARRO = 'ABONO_SALDO_FAVOR_CARRO',
   /** Descuento o ajuste que el propietario le hace a una persona sobre lo que debe (resuelve una observación de su enlace de cobro). */
   AJUSTE_DESCUENTO = 'AJUSTE_DESCUENTO',
+  /** Penalización de convivencia (Fase 4: «Multa por no anotar»). */
+  MULTA_CONVIVENCIA = 'MULTA_CONVIVENCIA',
 }
 
 export enum EstadoMovimientoDeuda {

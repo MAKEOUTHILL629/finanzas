@@ -15,6 +15,7 @@ import { CuentasFinancierasModule } from './modules/cuentas-financieras/cuentas-
 import { GastosRecurrentesModule } from './modules/gastos-recurrentes/gastos-recurrentes.module';
 import { NotificacionesCorreoModule } from './modules/notificaciones-correo/notificaciones-correo.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { EventosGrupalesModule } from './modules/eventos-grupales/eventos-grupales.module';
 import { EstadoCuentaPersonasModule } from './modules/estado-cuenta-personas/estado-cuenta-personas.module';
 import { LiquidacionMensualModule } from './modules/liquidacion-mensual/liquidacion-mensual.module';
 import { ObligacionesAportesModule } from './modules/obligaciones-aportes/obligaciones-aportes.module';
@@ -65,6 +66,7 @@ function flattenValidationErrors(errors: ValidationError[], prefix = ''): Record
     EstadoCuentaPersonasModule,
     DashboardModule,
     AnaliticaModule,
+    EventosGrupalesModule,
     CobrosModule,
     SubledgerDeudasModule,
   ],
