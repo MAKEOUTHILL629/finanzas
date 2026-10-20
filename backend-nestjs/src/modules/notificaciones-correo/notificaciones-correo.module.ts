@@ -3,6 +3,7 @@ import { WebhookOrJwtGuard } from '../../common/guards/webhook-or-jwt.guard';
 import { ComprasCreditoModule } from '../compras-credito/compras-credito.module';
 import { PrestamosModule } from '../prestamos/prestamos.module';
 import { TransaccionesModule } from '../transacciones/transacciones.module';
+import { AuditoriaCorreosService } from './auditoria-correos.service';
 import { NotificacionesCorreoController } from './notificaciones-correo.controller';
 import { NotificacionesCorreoService } from './notificaciones-correo.service';
 import { EjecutorCorreosService } from './ejecutor-correos.service';
@@ -19,6 +20,7 @@ import { SyncBatchService } from './sync-batch.service';
     EjecutorCorreosService,
     ProductosCorreoService,
     ReprocesoCorreosService,
+    AuditoriaCorreosService,
     WebhookOrJwtGuard,
   ],
 })

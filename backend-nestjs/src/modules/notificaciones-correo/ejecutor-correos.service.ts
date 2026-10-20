@@ -10,6 +10,7 @@ import { ComprasCreditoService } from '../compras-credito/compras-credito.servic
 import { ResponsablesService } from '../compras-credito/responsables.service';
 import { completarPlasticoDeCompra } from '../tarjetas/plasticos.db';
 import { TransaccionesService } from '../transacciones/transacciones.service';
+import { normalizarComercio } from './comercio.util';
 import { ItemNormalizado, Plan } from './planificador-correos';
 import { CompraSnap, NotificacionSnap, SnapshotCorreos, TransaccionSnap } from './snapshot-correos';
 
@@ -86,6 +87,8 @@ export class EjecutorCorreosService {
           transaccion_generada_id: true,
           vinculo: true,
           datos_parseados: true,
+          tarjeta_id: true,
+          cuenta_id: true,
         },
         orderBy: { id: 'desc' },
         take: MAX_FILAS,
@@ -105,6 +108,7 @@ export class EjecutorCorreosService {
           tarjeta_pagada_id: true,
           monto_cop: true,
           fecha_transaccion: true,
+          concepto: true,
           notificaciones: { select: { id: true }, take: 1 },
         },
         orderBy: { id: 'desc' },
@@ -164,6 +168,7 @@ export class EjecutorCorreosService {
           montoCop: toDecimal(t.monto_cop),
           fecha: t.fecha_transaccion,
           vinculada: t.notificaciones.length > 0,
+          conceptoNorm: normalizarComercio(t.concepto),
         }),
       ),
       notificaciones: notificaciones.map(
@@ -179,6 +184,9 @@ export class EjecutorCorreosService {
           compraId: n.compra_credito_generada_id,
           transaccionId: n.transaccion_generada_id,
           vinculo: n.vinculo,
+          tarjetaId: n.tarjeta_id,
+          cuentaId: n.cuenta_id,
+          huella: typeof (n.datos_parseados as Record<string, unknown> | null)?.huella_sincronizacion === 'string' ? String((n.datos_parseados as Record<string, unknown>).huella_sincronizacion) : null,
         }),
       ),
       offset: this.config.get<string>('SYNC_TZ_OFFSET') ?? '-05:00',
@@ -207,6 +215,11 @@ export class EjecutorCorreosService {
       fecha: item.fecha,
       hora: item.hora,
       motivo: plan.motivo,
+      tipo_intencion: a.tipoIntencion,
+      tipo_evento: a.tipoEvento,
+      es_compra_valida: a.esCompraValida,
+      huella_sincronizacion: a.huella,
+      confianza_resolucion: a.confianzaResolucion,
       ...(plan.plantilla ? { plantilla: { ...plan.plantilla } } : {}),
       ...(a.personaId !== null ? { persona_id: Number(a.personaId) } : {}),
     };

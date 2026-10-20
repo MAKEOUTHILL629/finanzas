@@ -6,6 +6,7 @@ import { WebhookOrJwtGuard } from '../../common/guards/webhook-or-jwt.guard';
 import { ConciliarCorreoDto, IngestaCorreoDto, NotificacionesFiltroDto } from './dto/notificacion.dto';
 import { AceptarSugerenciasDto, AsignarProductoDto, ReprocesarDto } from './dto/productos-correo.dto';
 import { parseSyncBatchBody, SyncNotificacionesBatchDto } from './dto/sync-batch.dto';
+import { AuditoriaCorreosService } from './auditoria-correos.service';
 import { NotificacionesCorreoService } from './notificaciones-correo.service';
 import { ProductosCorreoService } from './productos-correo.service';
 import { ReprocesoCorreosService } from './reproceso-correos.service';
@@ -20,6 +21,7 @@ export class NotificacionesCorreoController {
     private readonly syncBatch: SyncBatchService,
     private readonly productos: ProductosCorreoService,
     private readonly reproceso: ReprocesoCorreosService,
+    private readonly auditoria: AuditoriaCorreosService,
   ) {}
 
   @Get()
@@ -102,6 +104,20 @@ export class NotificacionesCorreoController {
   })
   reprocesar(@Body() dto: ReprocesarDto, @CurrentUser('userId') userId: bigint) {
     return this.reproceso.reprocesar(dto, userId);
+  }
+
+  @Post('auditar-falsos-positivos')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Preview de falsos positivos históricos: compras que eran pagos de tarjeta o compras rechazadas (Fase 1)' })
+  auditarFalsosPositivos(@CurrentUser('userId') userId: bigint) {
+    return this.auditoria.auditar(userId);
+  }
+
+  @Post('revertir-falsos-positivos')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Revierte los falsos positivos: elimina la compra errónea o la convierte en pago de tarjeta (Fase 1)' })
+  revertirFalsosPositivos(@Body() body: { ids?: number[] }, @CurrentUser('userId') userId: bigint) {
+    return this.auditoria.revertir(userId, body?.ids);
   }
 
   @Get('reprocesar/:jobId')

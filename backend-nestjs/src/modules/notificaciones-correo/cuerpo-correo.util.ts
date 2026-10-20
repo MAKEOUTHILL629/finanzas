@@ -34,6 +34,8 @@ export interface AvanceTarjeta {
 export interface InterpretacionCuerpo {
   /** «tu compra … no fue exitosa por fondos insuficientes»: no es un gasto. */
   rechazada: boolean;
+  /** «recibimos el pago de tu tarjeta…»: es un abono a tarjeta, nunca una compra (Fase 1). */
+  pagoTarjeta: boolean;
   /** Avisos de inscripción / clave dinámica: no mueven dinero. */
   informativo: boolean;
   recibida: TransferenciaRecibida | null;
@@ -47,6 +49,7 @@ export interface InterpretacionCuerpo {
 
 const VACIA: InterpretacionCuerpo = {
   rechazada: false,
+  pagoTarjeta: false,
   informativo: false,
   recibida: null,
   enviada: null,
@@ -68,7 +71,11 @@ export function interpretarCuerpo(cuerpo: string | null | undefined): Interpreta
   if (!cuerpo || !cuerpo.trim()) return VACIA;
   const t = plano(cuerpo);
 
-  const rechazada = /no fue exitosa|fue rechazad[ao]|transaccion rechazada|fondos insuficientes/i.test(t);
+  // Regex ampliada de la Fase 1 (texto ya sin tildes): declinada, fallida, cupo insuficiente, bloqueada…
+  const rechazada =
+    /no fue exitosa|no se pudo realizar|rechazad[ao]|declinad[ao]|transaccion fallida|fondos insuficientes|cupo insuficiente|intento de compra|bloquead[ao]|cancelad[ao] por el comercio/i.test(t);
+  const pagoTarjeta =
+    /pago (exitoso )?(a|de) (tu )?tarjeta|abono a tarjeta|recibimos (el|tu) pago de tu tarjeta|pago de extracto|pago minimo|pago total de tu tarjeta|comprobante de pago tarjeta/i.test(t);
   const informativo = /notificacion informativa/i.test(t) && /(inscripcion|clave dinamica)/i.test(t);
 
   let recibida: TransferenciaRecibida | null = null;
@@ -106,5 +113,5 @@ export function interpretarCuerpo(cuerpo: string | null | undefined): Interpreta
   const cuentaSinNumero = /en tu cuenta de ahorro/i.test(t) && !/en tu cuenta\s*\*?\s*\d{4}/i.test(t);
   const ultimos4 = recibida?.cuenta4 ?? enviada?.cuenta4 ?? avance?.tarjeta4 ?? null;
 
-  return { rechazada, informativo, recibida, enviada, avance, cuentaSinNumero, ultimos4 };
+  return { rechazada, pagoTarjeta, informativo, recibida, enviada, avance, cuentaSinNumero, ultimos4 };
 }

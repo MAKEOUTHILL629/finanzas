@@ -404,7 +404,7 @@ describe('planificador — compras con tarjeta de crédito', () => {
       },
       snap(),
     );
-    expect(plan).toMatchObject({ estado: 'IGNORADO', motivo: 'compra_rechazada_o_no_exitosa', accion: { tipo: 'NINGUNA' } });
+    expect(plan).toMatchObject({ estado: 'DESCARTADO_RECHAZADO', motivo: 'compra_rechazada_o_no_exitosa', accion: { tipo: 'NINGUNA' } });
   });
 });
 

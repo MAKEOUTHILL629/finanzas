@@ -15,11 +15,13 @@ import {
   resolverTarjeta,
   RutaSync,
 } from './bancolombia-normalizer.util';
+import { clasificarIntencionCorreo, generarHuellaSincronizacion, TipoIntencionCorreo } from './clasificador-correo.util';
 import { nombreLegibleComercio, normalizarComercio } from './comercio.util';
 import { InterpretacionCuerpo, interpretarCuerpo } from './cuerpo-correo.util';
+import { buscarCompraVentana36h, buscarTransaccionVentana36h, ConfianzaResolucion, inferirCuentaPorHistorial, inferirTarjetaPorHistorial } from './resolucion-identidad.util';
 import { encontrarPersona, nombreContraparte } from './persona-match.util';
 import { elegirPlantilla, PlantillaCompra } from './plantilla-compra.util';
-import { CompraSnap, NotificacionSnap, ResponsableSnap, SnapshotCorreos } from './snapshot-correos';
+import { CompraSnap, NotificacionSnap, ResponsableSnap, SnapshotCorreos, TarjetaSnap } from './snapshot-correos';
 
 /**
  * Planificador de correos: dado un correo ya clasificado por el Apps Script y la fotografía del usuario, decide QUÉ HACER
@@ -61,6 +63,12 @@ export interface Analisis {
   tarjetaId: bigint | null;
   cuentaId: bigint | null;
   personaId: bigint | null;
+  /** Clasificación semántica previa a la ingesta (Fase 1). */
+  tipoIntencion: TipoIntencionCorreo;
+  tipoEvento: 'PAGO_TARJETA' | 'COMPRA_TC' | 'RECHAZADO' | 'OTRO';
+  esCompraValida: boolean;
+  huella: string;
+  confianzaResolucion: ConfianzaResolucion | null;
 }
 
 export interface ResumenPlantilla {
@@ -137,24 +145,44 @@ export function analizar(item: ItemNormalizado, snap: SnapshotCorreos): Analisis
   const ultimos4 = extraerUltimos4(item.origenRaw) ?? cuerpo.ultimos4;
   const instrumento = detectarInstrumento(item.origenRaw, item.metodo);
   const ruta = decidirRuta({ ...item, tipo: item.tipo, metodo: item.metodo }, cuerpo);
+  const clasificacion = clasificarIntencionCorreo([item.asunto, item.comercio, item.cuerpoExtraido]);
+  // El cuerpo manda sobre el rótulo: rechazada/pago detectados en el texto pisan la clasificación por asunto.
+  const tipoIntencion: TipoIntencionCorreo = cuerpo.rechazada
+    ? 'TRANSACCION_RECHAZADA'
+    : cuerpo.pagoTarjeta
+      ? 'PAGO_ABONO_TARJETA'
+      : clasificacion.tipoIntencion;
+  const monto = parseMontoBancolombia(item.valor, moneda);
+  const fecha = construirFechaHora(item.fecha, item.hora, snap.offset);
 
   const nombre = cuerpo.recibida?.contraparte ?? cuerpo.enviada?.contraparte ?? nombreContraparte(item.comercio);
   const llave = cuerpo.recibida?.llave ?? cuerpo.enviada?.llave ?? /llave:\s*(\S+?)\)?\s*$/i.exec(item.comercio ?? '')?.[1] ?? null;
   const esMovimientoDeCuenta = ruta === 'INGRESO' || ruta === 'EGRESO';
   const persona = esMovimientoDeCuenta ? encontrarPersona(snap.personas.filter((p) => p.id !== snap.miPersonaId), nombre, llave) : null;
+  const comercioNorm = normalizarComercio(ruta === 'COMPRA_TC' ? item.comercio : (nombre ?? item.comercio));
 
   return {
     ruta,
     ultimos4,
     instrumento,
     moneda,
-    monto: parseMontoBancolombia(item.valor, moneda),
-    fecha: construirFechaHora(item.fecha, item.hora, snap.offset),
-    comercioNorm: normalizarComercio(ruta === 'COMPRA_TC' ? item.comercio : (nombre ?? item.comercio)),
+    monto,
+    fecha,
+    comercioNorm,
     cuerpo,
     tarjetaId: null,
     cuentaId: null,
     personaId: persona?.id ?? null,
+    tipoIntencion,
+    tipoEvento: tipoIntencion === 'TRANSACCION_RECHAZADA' ? 'RECHAZADO' : tipoIntencion === 'PAGO_ABONO_TARJETA' ? 'PAGO_TARJETA' : ruta === 'COMPRA_TC' ? 'COMPRA_TC' : 'OTRO',
+    esCompraValida: ruta === 'COMPRA_TC' && tipoIntencion !== 'TRANSACCION_RECHAZADA' && tipoIntencion !== 'PAGO_ABONO_TARJETA',
+    huella: generarHuellaSincronizacion({
+      fecha,
+      montoCentavos: monto ? monto.mul(100).toFixed(0) : null,
+      ultimos4,
+      comercio: comercioNorm,
+    }),
+    confianzaResolucion: null,
   };
 }
 
@@ -283,7 +311,24 @@ export function planificar(item: ItemNormalizado, snap: SnapshotCorreos, opcione
   const anteriorAlCorte = (fecha: Date) => opciones.desde != null && fecha.getTime() < opciones.desde.getTime();
 
   if (a.ruta === 'IGNORAR') {
-    return plan(EstadoNotificacionCorreo.IGNORADO, motivoIgnorar(item, a.cuerpo) ?? 'aviso_informativo_o_error_de_parseo');
+    const motivo = motivoIgnorar(item, a.cuerpo) ?? 'aviso_informativo_o_error_de_parseo';
+    // Fase 1: la compra rechazada queda descartada con su propio estado (no contamina compras ni la bandeja de ignorados genérica).
+    if (a.tipoIntencion === 'TRANSACCION_RECHAZADA' || motivo === 'compra_rechazada_o_no_exitosa') {
+      return plan(EstadoNotificacionCorreo.DESCARTADO_RECHAZADO, 'compra_rechazada_o_no_exitosa');
+    }
+    return plan(EstadoNotificacionCorreo.IGNORADO, motivo);
+  }
+  // Paso 1 de la cascada: misma huella = mismo hecho ya sincronizado, aunque cambie el ID temporal del lote.
+  if (a.huella) {
+    const porHuella = snap.notificaciones.find((n) => n.huella === a.huella && (notificacionId === null || n.id !== notificacionId));
+    if (porHuella) {
+      return plan(
+        EstadoNotificacionCorreo.IGNORADO,
+        'duplicado_por_huella',
+        { tipo: 'DUPLICADO', originalId: porHuella.id },
+        { vinculo: 'DUPLICADO', notificacionOriginalId: porHuella.id },
+      );
+    }
   }
   if (a.ruta === 'SIN_RUTA') return pendiente('tipo_o_metodo_no_reconocido');
   if (!a.fecha) return plan(EstadoNotificacionCorreo.ERROR, 'fecha_u_hora_invalida');
@@ -340,6 +385,7 @@ function planCompraTc(
 ): Plan {
   const tarjeta = resolverTarjeta(snap.tarjetas, a.ultimos4);
   a.tarjetaId = tarjeta?.id ?? null;
+  if (tarjeta) a.confianzaResolucion = 'CADENA_PLASTICO';
 
   const fechaCompra = parseIsoDate(item.fecha);
   if (!fechaCompra) return plan(EstadoNotificacionCorreo.ERROR, 'fecha_invalida');
@@ -348,13 +394,46 @@ function planCompraTc(
   const existente = buscarCompraExistente(snap, { tarjetaId: a.tarjetaId, fecha: item.fecha, monto: b.monto, moneda: a.moneda });
   if (existente) {
     a.tarjetaId = a.tarjetaId ?? existente.tarjetaId;
+    if (!tarjeta && a.tarjetaId) a.confianzaResolucion = 'EXACTA';
     return plan(EstadoNotificacionCorreo.CONCILIADO, 'vinculada_a_compra_existente', { tipo: 'VINCULAR_COMPRA', compraId: existente.id }, { vinculo: 'EXISTENTE' });
   }
 
-  if (!tarjeta) return pendiente('tarjeta_no_identificada');
-  if (anteriorAlCorte(b.fecha)) return pendiente(MOTIVO_HISTORICO);
+  // 1b. Ventana de ±36 h (Fase 1, paso 4): único huérfano con monto exacto y comercio similar.
+  const porVentana = buscarCompraVentana36h(snap, { fecha: b.fecha, monto: b.monto, moneda: a.moneda, comercioNorm: a.comercioNorm, tarjetaId: a.tarjetaId });
+  if (porVentana !== null) {
+    const compraVentana = snap.compras.find((c) => c.id === porVentana);
+    a.tarjetaId = a.tarjetaId ?? compraVentana?.tarjetaId ?? null;
+    a.confianzaResolucion = 'VENTANA_36H';
+    return plan(EstadoNotificacionCorreo.CONCILIADO, 'vinculada_por_ventana_36h', { tipo: 'VINCULAR_COMPRA', compraId: porVentana }, { vinculo: 'EXISTENTE' });
+  }
 
-  // 2. Compra nueva: con los valores que el usuario ya usó con este comercio, si los hay.
+  // Paso 3: sin últimos 4 (o sin match), el historial del comercio puede pre-asignar la tarjeta (>80 %).
+  if (!tarjeta) {
+    const inferida = inferirTarjetaPorHistorial(snap, a.comercioNorm);
+    if (inferida) {
+      a.tarjetaId = inferida.tarjetaId;
+      a.confianzaResolucion = 'ALTA_INFERIDA';
+      const tarjetaInferida = snap.tarjetas.find((t) => t.id === inferida.tarjetaId);
+      if (tarjetaInferida) return planCompraNueva(item, snap, a, b, plan, pendiente, anteriorAlCorte, tarjetaInferida, fechaCompra);
+    }
+    return pendiente('tarjeta_no_identificada');
+  }
+  return planCompraNueva(item, snap, a, b, plan, pendiente, anteriorAlCorte, tarjeta, fechaCompra);
+}
+
+/** Compra nueva: con los valores que el usuario ya usó con este comercio, si los hay. */
+function planCompraNueva(
+  item: ItemNormalizado,
+  snap: SnapshotCorreos,
+  a: Analisis,
+  b: Base,
+  plan: FabricaPlan,
+  pendiente: (motivo: string) => Plan,
+  anteriorAlCorte: (f: Date) => boolean,
+  tarjeta: TarjetaSnap,
+  fechaCompra: Date,
+): Plan {
+  if (anteriorAlCorte(b.fecha)) return pendiente(MOTIVO_HISTORICO);
   const esAvance = item.tipo.trim().toLowerCase() === 'avance';
   const plantilla: PlantillaCompra | null = esAvance ? null : elegirPlantilla(snap, a.comercioNorm);
   const tasaInteres = esAvance ? tarjeta.tasa_interes_avance : tarjeta.tasa_interes_compra;
@@ -365,7 +444,7 @@ function planCompraTc(
 
   return plan(
     plantilla ? EstadoNotificacionCorreo.CONCILIADO : EstadoNotificacionCorreo.PENDIENTE,
-    plantilla ? 'compra_creada_desde_plantilla' : 'compra_tc_creada_a_1_cuota', // el usuario ajusta cuotas/responsables al conciliar
+    plantilla ? 'compra_creada_desde_plantilla' : 'compra_tc_creada_a_1_cuota',
     {
       tipo: 'CREAR_COMPRA',
       tarjetaId: tarjeta.id,
@@ -474,12 +553,41 @@ function planMovimientoCuenta(
   if (cuenta) {
     const existente = buscarTransaccionExistente(snap, { cuentaId: cuenta.id, esIngreso, montoCop, fecha: b.fecha });
     if (existente !== null) {
+      a.confianzaResolucion = 'EXACTA';
       return plan(EstadoNotificacionCorreo.CONCILIADO, 'vinculada_a_transaccion_existente', { tipo: 'VINCULAR_TRANSACCION', transaccionId: existente, completarTarjetaId: null }, { vinculo: 'EXISTENTE' });
     }
   }
-  if (!cuenta) return pendiente('cuenta_no_identificada');
-  if (anteriorAlCorte(b.fecha)) return pendiente(MOTIVO_HISTORICO);
+  // Ventana ±36 h sin exigir cuenta (Fase 1, paso 4).
+  const porVentana = buscarTransaccionVentana36h(snap, { fecha: b.fecha, monto: montoCop, comercioNorm: a.comercioNorm });
+  if (porVentana !== null) {
+    a.confianzaResolucion = 'VENTANA_36H';
+    return plan(EstadoNotificacionCorreo.CONCILIADO, 'vinculada_por_ventana_36h', { tipo: 'VINCULAR_TRANSACCION', transaccionId: porVentana, completarTarjetaId: null }, { vinculo: 'EXISTENTE' });
+  }
+  if (!cuenta) {
+    // Paso 3: inferencia por historial del comercio (>80 %).
+    const inferida = inferirCuentaPorHistorial(snap, a.comercioNorm);
+    const cuentaInferida = inferida ? snap.cuentas.find((c) => c.id === inferida.cuentaId) : undefined;
+    if (!cuentaInferida) return pendiente('cuenta_no_identificada');
+    a.cuentaId = cuentaInferida.id;
+    a.confianzaResolucion = 'ALTA_INFERIDA';
+    return planMovimientoConCuenta(item, snap, a, b, plan, pendiente, anteriorAlCorte, cuentaInferida, esIngreso, montoCop);
+  }
+  return planMovimientoConCuenta(item, snap, a, b, plan, pendiente, anteriorAlCorte, cuenta, esIngreso, montoCop);
+}
 
+function planMovimientoConCuenta(
+  item: ItemNormalizado,
+  snap: SnapshotCorreos,
+  a: Analisis,
+  b: Base,
+  plan: FabricaPlan,
+  pendiente: (motivo: string) => Plan,
+  anteriorAlCorte: (f: Date) => boolean,
+  cuenta: { id: bigint },
+  esIngreso: boolean,
+  montoCop: Decimal,
+): Plan {
+  if (anteriorAlCorte(b.fecha)) return pendiente(MOTIVO_HISTORICO);
   const persona = a.personaId === null ? null : snap.personas.find((p) => p.id === a.personaId);
   const contraparte = a.cuerpo.recibida?.contraparte ?? null;
   const concepto =

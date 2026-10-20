@@ -66,6 +66,8 @@ export interface TransaccionSnap {
   montoCop: Decimal;
   fecha: Date;
   vinculada: boolean;
+  /** Concepto normalizado (para la reconciliación por ventana de ±36 h, Fase 1). */
+  conceptoNorm?: string;
 }
 
 export interface NotificacionSnap {
@@ -80,6 +82,11 @@ export interface NotificacionSnap {
   compraId: bigint | null;
   transaccionId: bigint | null;
   vinculo: string | null;
+  /** Producto resuelto en su momento (columnas indexables, sql/003): alimenta la inferencia por historial. */
+  tarjetaId?: bigint | null;
+  cuentaId?: bigint | null;
+  /** Huella de sincronización guardada en datos_parseados (Fase 1). */
+  huella?: string | null;
 }
 
 export interface SnapshotCorreos {
@@ -165,6 +172,7 @@ export function aplicarPlanASnapshot(snap: SnapshotCorreos, plan: Plan, ids: Ids
           montoCop: accion.montoCop,
           fecha: d.fechaTransaccion,
           vinculada: true,
+          conceptoNorm: d.concepto ? normalizarComercio(d.concepto) : '',
         });
       }
       break;
@@ -186,6 +194,9 @@ export function aplicarPlanASnapshot(snap: SnapshotCorreos, plan: Plan, ids: Ids
     compraId,
     transaccionId,
     vinculo: plan.vinculo,
+    tarjetaId: analisis.tarjetaId,
+    cuentaId: analisis.cuentaId,
+    huella: analisis.huella,
   };
   if (previa) Object.assign(previa, nueva);
   else snap.notificaciones.push(nueva);

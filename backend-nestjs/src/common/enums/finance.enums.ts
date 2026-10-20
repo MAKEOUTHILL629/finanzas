@@ -39,6 +39,8 @@ export enum EstadoNotificacionCorreo {
   CONCILIADO = 'CONCILIADO',
   IGNORADO = 'IGNORADO',
   ERROR = 'ERROR',
+  /** Compra rechazada/no exitosa detectada por el clasificador (Fase 1): no es un gasto. */
+  DESCARTADO_RECHAZADO = 'DESCARTADO_RECHAZADO',
 }
 
 export enum FrecuenciaRecurrente {

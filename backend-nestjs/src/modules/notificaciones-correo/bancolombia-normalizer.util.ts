@@ -44,6 +44,7 @@ export interface ItemParaRuteo {
   tipo: string;
   metodo: string;
   asunto?: string | null;
+  comercio?: string | null;
   esErrorParsing?: boolean | null;
   origenRaw?: string | null;
 }
@@ -73,6 +74,11 @@ export function decidirRuta(item: ItemParaRuteo, cuerpo?: InterpretacionCuerpo |
   const tipo = sinTildes(item.tipo).trim().toLowerCase();
   const metodo = sinTildes(item.metodo).trim().toLowerCase();
   const instrumento = detectarInstrumento(item.origenRaw, item.metodo);
+
+  // Fase 1: un pago/abono de tarjeta jamás es una compra, aunque el Apps Script lo rotule «Compra».
+  if (cuerpo?.pagoTarjeta) return 'PAGO_TARJETA';
+  const textoLibre = sinTildes(`${item.asunto ?? ''} ${item.comercio ?? ''}`).toLowerCase();
+  if (/\b(pago (exitoso )?(a|de) (tu )?tarjeta|recibimos (el|tu) pago|pago de extracto|comprobante de pago tarjeta)\b/.test(textoLibre)) return 'PAGO_TARJETA';
 
   if ((tipo === 'compra' || tipo === 'avance') && (metodo === 'tarjeta credito' || instrumento === 'TC')) return 'COMPRA_TC';
   if (metodo === 'pago tarjeta' || tipo === 'abono tarjeta' || tipo === 'abono deuda') return 'PAGO_TARJETA';
