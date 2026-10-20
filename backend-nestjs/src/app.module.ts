@@ -6,6 +6,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { JsonSerializationInterceptor } from './common/interceptors/json-serialization.interceptor';
 import { datosInvalidos } from './common/utils/legacy-http.util';
 import { validateEnv } from './config/env.validation';
+import { AnaliticaModule } from './modules/analitica/analitica.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CobrosModule } from './modules/cobros/cobros.module';
 import { ComprasCreditoModule } from './modules/compras-credito/compras-credito.module';
@@ -63,6 +64,7 @@ function flattenValidationErrors(errors: ValidationError[], prefix = ''): Record
     LiquidacionMensualModule,
     EstadoCuentaPersonasModule,
     DashboardModule,
+    AnaliticaModule,
     CobrosModule,
     SubledgerDeudasModule,
   ],

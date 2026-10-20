@@ -73,6 +73,58 @@ export function mismoComercio(a: string, b: string, umbral = 0.6): boolean {
   return similitudComercio(a, b) >= umbral;
 }
 
+export interface ComercioYTags {
+  comercioCanonico: string | null;
+  tags: string[];
+}
+
+/**
+ * Inferencia de comercio canónico + tags (Fase 2). El orden importa: las marcas paraguas se
+ * desambiguan primero (DiDi Food ≠ DiDi Rides, Rappi Pro ≠ Rappi, Uber Eats ≠ Uber).
+ */
+export function inferirComercioYTags(descripcionRaw: string | null | undefined): ComercioYTags {
+  const t = sinTildes(descripcionRaw ?? '').toLowerCase();
+  if (!t.trim()) return { comercioCanonico: null, tags: [] };
+  const R = (re: RegExp, comercioCanonico: string | null, tags: string[]): ComercioYTags | null =>
+    re.test(t) ? { comercioCanonico, tags } : null;
+  const encontrado =
+    R(/didi\s*\*?\s*food|didi\s+restaurantes/, 'DiDi Food', ['#domicilios', '#didi-food', '#comida']) ??
+    R(/didi(?!\s*\*?\s*food)|didi\s*rides|didi\s*mobility/, 'DiDi Rides', ['#transporte', '#didi-rides', '#movilidad']) ??
+    R(/rappi\s*prime|rappi\s*pro/, 'Rappi Pro', ['#suscripciones', '#rappi']) ??
+    R(/rappi/, 'Rappi', ['#domicilios', '#rappi', '#comida']) ??
+    R(/uber\s*eats/, 'Uber Eats', ['#domicilios', '#uber-eats', '#comida']) ??
+    R(/uber|cabify|picap|indriver|beat\b/, null, ['#transporte', '#movilidad']) ??
+    R(/frisby|kfc|subway|sandwich\s*gourmet|mcdonalds|mc\s*donald|el\s*corral|burger\s*king|dominos|papa\s*john/, null, ['#comida', '#restaurantes']) ??
+    R(/bershka/, 'Bershka', ['#ropa', '#bershka', '#moda']) ??
+    R(/koaj|permis/, 'Koaj', ['#ropa', '#koaj', '#moda']) ??
+    R(/zara|pull\s*&\s*bear|stradivarius|mattelsa|gef|punto\s*blanco|h&m|hym\b|falabella|arturo\s*calle/, null, ['#ropa', '#moda']) ??
+    R(/avianca|latam|wingo|jetsmart|satena|easyfly/, null, ['#viajes', '#turismo', '#vuelos']) ??
+    R(/airbnb|booking|despegar|hotel|glamping|hostal/, null, ['#viajes', '#turismo', '#hospedaje']) ??
+    R(/peaje/, null, ['#viajes', '#transporte', '#peajes']) ??
+    R(/netflix|spotify|youtube\s*premium|hbo|max\b|disney|apple\s*(tv|music|icloud)|icloud|chatgpt|openai|claude|gemini|amazon\s*prime|prime\s*video/, null, ['#suscripciones']) ??
+    R(/codensa|enel|epm|agua|alcantarillado|gas\s*natural|vanti|claro|movistar|tigo|etb|internet|fibra/, null, ['#servicios', '#hogar']) ??
+    R(/exito|carulla|jumbo|olimpica|d1\b|ara\b|mercado|crepes|homecenter|sodimac|ikea/, null, ['#mercado', '#hogar']);
+  if (encontrado) return encontrado;
+  const legible = nombreLegibleComercio(descripcionRaw);
+  return { comercioCanonico: legible || null, tags: [] };
+}
+
+/** Ventana de un clúster de viajes: [inicio, fin] a partir de las fechas ancla (vuelos/hoteles). */
+export function ventanasDeViaje(fechasAncla: Date[]): Array<{ desde: Date; hasta: Date }> {
+  const ordenadas = [...fechasAncla].sort((a, b) => a.getTime() - b.getTime());
+  const ventanas: Array<{ desde: Date; hasta: Date }> = [];
+  const DIA = 86_400_000;
+  for (const f of ordenadas) {
+    const ultima = ventanas[ventanas.length - 1];
+    if (ultima && f.getTime() - ultima.hasta.getTime() <= 10 * DIA) {
+      if (f.getTime() > ultima.hasta.getTime()) ultima.hasta = new Date(f.getTime());
+    } else {
+      ventanas.push({ desde: new Date(f.getTime()), hasta: new Date(f.getTime()) });
+    }
+  }
+  return ventanas.map((v) => ({ desde: new Date(v.desde.getTime() - DIA), hasta: new Date(v.hasta.getTime() + 3 * DIA) }));
+}
+
 /** Nombre presentable del comercio ("DL*DIDI FOOD CO" → "Didi Food"): sin pasarela ni palabras genéricas, con mayúscula inicial. */
 export function nombreLegibleComercio(texto: string | null | undefined): string {
   if (!texto) return '';

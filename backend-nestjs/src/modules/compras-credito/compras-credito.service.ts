@@ -78,6 +78,9 @@ export interface CompraCreditoJson {
   /** CAPITAL_FIJO (compras normales) | FRANCES (cuota fija: los refinanciamientos). */
   sistemaAmortizacion: string;
   cuotaFijaPactada: number | null;
+  /** Tags transversales (Fase 2, sql/011). */
+  tags: string[];
+  comercioCanonico: string | null;
 }
 
 @Injectable()
@@ -694,6 +697,8 @@ export class ComprasCreditoService {
       saldoRefinanciado: numOrNull(c.saldo_refinanciado),
       sistemaAmortizacion: c.sistema_amortizacion ?? 'CAPITAL_FIJO',
       cuotaFijaPactada: numOrNull(c.cuota_fija_pactada),
+      tags: c.tags ?? [],
+      comercioCanonico: c.comercio_canonico ?? null,
     };
   }
 }

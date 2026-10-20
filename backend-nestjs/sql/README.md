@@ -32,3 +32,5 @@ node scripts/aplicar-sql.js --database-url=postgresql://postgres:postgres@localh
 
 El aplicador compara los objetos antes y después, **aborta si cambia alguna fila** de `MovimientosDeudaPersona` y no imprime credenciales.
 Las pruebas de integración (`npm run test:integration`) reconstruyen una BD de prueba con el esquema de Prisma y le aplican estos mismos archivos.
+| `011_sistema_tags_y_analitica.sql` | `Etiquetas`, `ReglasAutoTag`, `tags`/`comercio_canonico` en compras y transacciones con indices GIN (Fase 2). Solo DDL aditivo. |
+| `rollback_011.sql` | Reversa manual de `011`. |

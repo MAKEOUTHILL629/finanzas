@@ -244,6 +244,8 @@ describe('Contrato HTTP legacy', () => {
           saldoRefinanciado: null,
           sistemaAmortizacion: 'CAPITAL_FIJO',
           cuotaFijaPactada: null,
+          tags: [],
+          comercioCanonico: null,
         },
       ]);
       expect(prisma.comprasCredito.findMany.mock.calls[0][0].where).toEqual({ owner_user_id: 7n });

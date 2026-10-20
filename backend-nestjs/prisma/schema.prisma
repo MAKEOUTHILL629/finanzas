@@ -59,6 +59,39 @@ model Users {
   reportes_pago              ReportesPagoPersona[]
   metodos_pago               MetodosPagoUsuario[]
   objeciones_cobro           ObjecionesCobro[]
+  etiquetas                  Etiquetas[]
+  reglas_auto_tag            ReglasAutoTag[]
+}
+
+model Etiquetas {
+  id              BigInt   @id @default(autoincrement())
+  owner_user_id   BigInt
+  slug            String   @db.VarChar(80)
+  nombre          String   @db.VarChar(120)
+  color           String?  @db.VarChar(30)
+  icono           String?  @db.VarChar(60)
+  tipo_agrupacion String   @default("HABITO") @db.VarChar(20)
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  owner Users @relation(fields: [owner_user_id], references: [id])
+
+  @@unique([owner_user_id, slug])
+}
+
+model ReglasAutoTag {
+  id                       BigInt   @id @default(autoincrement())
+  owner_user_id            BigInt
+  patron_comercio_regex    String?  @db.VarChar(500)
+  patron_descripcion_regex String?  @db.VarChar(500)
+  monto_min                Decimal? @db.Decimal(15, 2)
+  monto_max                Decimal? @db.Decimal(15, 2)
+  comercio_canonico        String?  @db.VarChar(120)
+  tags_slugs               String[] @default([])
+  prioridad                Int      @default(100)
+  activo                   Boolean  @default(true)
+  created_at               DateTime @default(now()) @db.Timestamptz(6)
+
+  owner Users @relation(fields: [owner_user_id], references: [id])
 }
 
 model linked_accounts {
@@ -201,6 +234,9 @@ model ComprasCredito {
   sistema_amortizacion  String    @default("CAPITAL_FIJO") @db.VarChar(12)
   /// Cuota que dio el banco cuando difiere de la calculada (incluye seguros o ajustes).
   cuota_fija_pactada    Decimal?  @db.Decimal
+  /// Tags transversales (sql/011, Fase 2): slugs con '#', p. ej. ['#domicilios','#rappi'].
+  tags                  String[]  @default([])
+  comercio_canonico     String?   @db.VarChar(120)
 
   tarjeta_ref Tarjetas?         @relation(fields: [tarjeta], references: [id])
   owner       Users?            @relation(fields: [owner_user_id], references: [id])
@@ -317,6 +353,9 @@ model Transacciones {
   estado            String?   @db.VarChar
   notas             String?
   created_at        DateTime? @default(now()) @db.Timestamptz(6)
+  /// Tags transversales (sql/011, Fase 2).
+  tags              String[]            @default([])
+  comercio_canonico String?             @db.VarChar(120)
 
   owner          Users               @relation(fields: [owner_user_id], references: [id])
   cuenta_origen  CuentasFinancieras? @relation("TxCuentaOrigen", fields: [cuenta_origen_id], references: [id])
