@@ -101,4 +101,15 @@ export class CrearTarjetaDto {
   @IsString()
   @MaxLength(500)
   notas?: string;
+
+  @ApiPropertyOptional({ description: 'Tarjeta prestada/de un tercero (Fase 5): no suma al cupo propio' })
+  @IsOptional()
+  @IsBoolean()
+  esTitularExterno?: boolean;
+
+  @ApiPropertyOptional({ example: 5, description: 'Persona titular de la tarjeta prestada (ej. Mamá)' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  titularPersonaId?: number;
 }

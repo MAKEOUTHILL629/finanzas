@@ -96,4 +96,15 @@ export class ActualizarTarjetaDto {
   @IsOptional()
   @IsBoolean()
   extractTasas?: boolean;
+
+  @ApiPropertyOptional({ description: 'Tarjeta prestada/de un tercero (Fase 5)' })
+  @IsOptional()
+  @IsBoolean()
+  esTitularExterno?: boolean;
+
+  @ApiPropertyOptional({ example: 5, nullable: true, description: 'Persona titular de la tarjeta prestada' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  titularPersonaId?: number | null;
 }

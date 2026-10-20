@@ -138,6 +138,8 @@ model Personas {
   objeciones_cobro         ObjecionesCobro[]
   notificaciones           NotificacionesCorreo[]
   participaciones_eventos  ParticipantesEventoGrupal[]
+  tarjetas_titular_externo Tarjetas[]                   @relation("TarjetaTitularExterno")
+  aportes_colaborativos    AportesColaborativosCuota[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -170,9 +172,13 @@ model Tarjetas {
   alias                      String?   @db.VarChar
   /// Producto que recibe lo que el banco avisa SIN los últimos 4 dígitos («Crédito sin número»).
   es_generica                Boolean   @default(false)
+  /// Tarjeta prestada/de un tercero (sql/013, Fase 5): no suma al cupo propio; genera obligación hacia el titular.
+  es_titular_externo         Boolean   @default(false)
+  titular_persona_id         BigInt?
 
   owner  Users?              @relation(fields: [owner_user_id], references: [id])
   cuenta CuentasFinancieras? @relation("TarjetaCuenta", fields: [cuenta_id], references: [id], onDelete: Restrict)
+  titular Personas?          @relation("TarjetaTitularExterno", fields: [titular_persona_id], references: [id])
 
   compras               ComprasCredito[]
   transacciones_pagadas Transacciones[]
@@ -248,6 +254,7 @@ model ComprasCredito {
   absorbidas       ComprasCredito[] @relation("Refinanciamiento")
 
   cuotas           CuotasDetalle[]
+  aportes_colaborativos AportesColaborativosCuota[]
   responsables     ResponsablesComprasCredito[]
   notificaciones   NotificacionesCorreo[]
   periodos_pagados PeriodosRecurrentes[]
@@ -270,6 +277,7 @@ model CuotasDetalle {
   compra_ref ComprasCredito? @relation(fields: [compra], references: [id])
 
   movimientos MovimientosDeudaPersona[]
+  aportes_colaborativos AportesColaborativosCuota[]
 }
 
 model ResponsablesComprasCredito {
@@ -371,6 +379,7 @@ model Transacciones {
   aportes_detalle  AportesDetalle[]
   cobros_puntuales CobrosPuntuales[]
   reportes_pago    ReportesPagoPersona[]
+  aportes_colaborativos AportesColaborativosCuota[]
 }
 
 model NotificacionesCorreo {
@@ -899,4 +908,24 @@ model GastosEventoGrupal {
 
   evento     EventosLiquidacionGrupal  @relation(fields: [evento_id], references: [id], onDelete: Cascade)
   pagado_por ParticipantesEventoGrupal @relation(fields: [pagado_por_participante_id], references: [id])
+}
+
+
+model AportesColaborativosCuota {
+  id                   BigInt   @id @default(autoincrement())
+  cuota_detalle_id     BigInt
+  compra_credito_id    BigInt
+  aportante_persona_id BigInt
+  monto_aportado       Decimal  @db.Decimal(15, 2)
+  fecha_aporte         DateTime @default(now()) @db.Date
+  modalidad_entrega    String   @default("TRANSFERIDO_A_MI") @db.VarChar(30)
+  transaccion_id       BigInt?
+  comprobante_url      String?
+  observaciones        String?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+
+  cuota_detalle CuotasDetalle  @relation(fields: [cuota_detalle_id], references: [id], onDelete: Cascade)
+  compra        ComprasCredito @relation(fields: [compra_credito_id], references: [id], onDelete: Cascade)
+  aportante     Personas       @relation(fields: [aportante_persona_id], references: [id])
+  transaccion   Transacciones? @relation(fields: [transaccion_id], references: [id])
 }

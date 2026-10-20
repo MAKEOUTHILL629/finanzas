@@ -99,6 +99,8 @@ export class TarjetasService {
           descripcion: dto.descripcion?.trim() || null,
           alias: dto.alias?.trim() || null,
           es_generica: esGenerica,
+          es_titular_externo: dto.esTitularExterno === true,
+          titular_persona_id: dto.titularPersonaId !== undefined ? BigInt(dto.titularPersonaId) : null,
           ...(tipo === 'CREDITO'
             ? {
                 dia_corte: dto.diaCorte ?? null,
@@ -196,6 +198,8 @@ export class TarjetasService {
     if (dto.cuotaManejo !== undefined) data.cuota_manejo = toDbMoney(toDecimal(dto.cuotaManejo));
     if (dto.urlInfo !== undefined) data.url_info = dto.urlInfo.trim() || null;
     if (dto.extractTasas !== undefined) data.extract_tasas = dto.extractTasas;
+    if (dto.esTitularExterno !== undefined) data.es_titular_externo = dto.esTitularExterno;
+    if (dto.titularPersonaId !== undefined) data.titular_persona_id = dto.titularPersonaId === null ? null : BigInt(dto.titularPersonaId);
 
     await this.prisma.$transaction(async (tx) => {
       if (Object.keys(data).length > 0) await tx.tarjetas.update({ where: { id: actual.id }, data });
@@ -494,6 +498,9 @@ export class TarjetasService {
       cuentaId: t.cuenta_id === null ? null : idNum(t.cuenta_id),
       alias: t.alias,
       esGenerica: t.es_generica,
+      /** Tarjeta prestada (Fase 5): badge «Tarjetas Prestadas / De Terceros», fuera del cupo propio. */
+      esTitularExterno: t.es_titular_externo ?? false,
+      titularPersonaId: t.titular_persona_id === null || t.titular_persona_id === undefined ? null : idNum(t.titular_persona_id),
       fechaCreacion: this.fechaCreacionIso(t),
       descripcion: t.descripcion,
       tasaInteresCompra: numOrNull(t.tasa_interes_compra),

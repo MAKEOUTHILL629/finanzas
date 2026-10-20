@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { AportesCuotaController } from './aportes-cuota.controller';
+import { AportesCuotaService } from './aportes-cuota.service';
 import { ComprasCreditoCsvService } from './compras-credito-csv.service';
 import { ComprasCreditoV2Controller } from './compras-credito-v2.controller';
 import { ComprasCreditoController } from './compras-credito.controller';
@@ -19,10 +21,11 @@ import { ResponsablesService } from './responsables.service';
     ComprasCreditoController,
     PagosTarjetaController,
     ComprasCreditoV2Controller,
+    AportesCuotaController,
     CuotasDetalleController,
     RefinanciamientosController,
   ],
-  providers: [ComprasCreditoService, ComprasCreditoCsvService, CuotasDetalleService, PagosService, RefinanciamientoService, ResponsablesService],
-  exports: [ComprasCreditoService, PagosService, RefinanciamientoService, ResponsablesService],
+  providers: [ComprasCreditoService, ComprasCreditoCsvService, CuotasDetalleService, PagosService, RefinanciamientoService, ResponsablesService, AportesCuotaService],
+  exports: [ComprasCreditoService, PagosService, RefinanciamientoService, ResponsablesService, AportesCuotaService],
 })
 export class ComprasCreditoModule {}

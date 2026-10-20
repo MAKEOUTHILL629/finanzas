@@ -53,6 +53,9 @@ export interface ItemTarjeta {
   diaLimitePago: number | null;
   cupoTotal: number | null;
   permiteDolares: boolean;
+  /** Tarjeta prestada/de tercero (Fase 5): fuera del cupo propio. */
+  esTitularExterno: boolean;
+  titularPersonaId: number | null;
 }
 
 export interface ItemCuenta {
@@ -149,6 +152,8 @@ export class LookupService {
         cuenta_id: true,
         alias: true,
         es_generica: true,
+        es_titular_externo: true,
+        titular_persona_id: true,
         plasticos: { select: { id: true, ultimos_4: true, es_activo: true, vigente_desde: true, vigente_hasta: true }, orderBy: { id: 'desc' } },
       },
       orderBy: { id: 'asc' },
@@ -184,6 +189,8 @@ export class LookupService {
         diaLimitePago: t.dia_limite_pago,
         cupoTotal: numOrNull(t.cupo_total),
         permiteDolares: t.permite_dolares === true,
+        esTitularExterno: t.es_titular_externo === true,
+        titularPersonaId: t.titular_persona_id === null ? null : idNum(t.titular_persona_id),
       };
     });
   }

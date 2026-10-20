@@ -68,6 +68,9 @@ export interface TarjetaDashboard {
    */
   vencidoSinRegistrar: Decimal;
   proximoVencimiento: VencimientoExtracto | null;
+  /** Tarjeta prestada (Fase 5): se lista aparte y no suma al cupo propio. */
+  esTitularExterno: boolean;
+  titularPersonaId: number | null;
 }
 
 /**
@@ -131,8 +134,10 @@ export class DashboardService {
           terceros: suma(tarjetasResumen.map((t) => t.terceros)),
           deudaPendiente: deudaTarjetas,
           vencidoSinRegistrar: suma(tarjetasResumen.map((t) => t.vencidoSinRegistrar)),
-          cupoTotal: suma(tarjetasResumen.map((t) => t.cupoTotal ?? cero())),
-          cupoUtilizado: suma(tarjetasResumen.map((t) => t.cupoUtilizado)),
+          // Solo tarjetas propias: las prestadas (Fase 5) no ocupan cupo bancario del usuario.
+          cupoTotal: suma(tarjetasResumen.filter((t) => !t.esTitularExterno).map((t) => t.cupoTotal ?? cero())),
+          cupoUtilizado: suma(tarjetasResumen.filter((t) => !t.esTitularExterno).map((t) => t.cupoUtilizado)),
+          tarjetasPrestadas: tarjetasResumen.filter((t) => t.esTitularExterno).length,
         },
       },
       porCobrar,
@@ -191,6 +196,8 @@ export class DashboardService {
           deudaPendienteMiParte: money(pendiente.minus(pendienteTerceros)),
           vencidoSinRegistrar,
           proximoVencimiento: vencimientos.find((v) => !v.vencido) ?? vencimientos[0] ?? null,
+          esTitularExterno: t.esTitularExterno === true,
+          titularPersonaId: t.titularPersonaId ?? null,
         };
       })
       .filter((t) => t.pagoDelMes.greaterThan(0) || t.deudaPendiente.greaterThan(0) || t.cupoUtilizado.greaterThan(0) || t.vencidoSinRegistrar.greaterThan(0) || t.cupoTotal !== null)

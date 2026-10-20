@@ -36,3 +36,5 @@ Las pruebas de integración (`npm run test:integration`) reconstruyen una BD de 
 | `rollback_011.sql` | Reversa manual de `011`. |
 | `012_eventos_grupales_multilaterales.sql` | Eventos grupales/viajes: participantes con peso y gastos con division (Fase 4). Solo DDL aditivo. |
 | `rollback_012.sql` | Reversa manual de `012`. |
+| `013_tarjetas_terceros_y_aportes_cuota.sql` | Tarjetas prestadas (titular externo) y aportes colaborativos por cuota (Fase 5). Solo DDL aditivo. |
+| `rollback_013.sql` | Reversa manual de `013`. |
