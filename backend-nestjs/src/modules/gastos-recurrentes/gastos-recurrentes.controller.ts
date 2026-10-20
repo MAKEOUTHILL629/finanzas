@@ -105,6 +105,28 @@ export class PeriodosRecurrentesController {
 
 @ApiTags('Gastos recurrentes')
 @ApiBearerAuth()
+@Controller('api/recurrentes/radar')
+export class RadarSuscripcionesController {
+  constructor(private readonly recurrentes: GastosRecurrentesService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Radar de suscripciones: pagos recurrentes detectados por correlación (Fase 3)' })
+  @ApiQuery({ name: 'meses', required: false, type: Number })
+  detectar(@CurrentUser('userId') userId: bigint, @Query('meses') meses?: string) {
+    const n = meses ? Number(meses) : 6;
+    return this.recurrentes.detectarPagosRecurrentesPorCorrelacion(userId, Number.isFinite(n) && n > 0 ? Math.min(n, 24) : 6);
+  }
+
+  @Post('marcar-cancelar')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Marca una suscripción detectada como pendiente de cancelación' })
+  marcarCancelar(@Body() dto: { comercio: string; monto?: number | string; frecuencia?: string }, @CurrentUser('userId') userId: bigint) {
+    return this.recurrentes.marcarParaCancelar(userId, dto);
+  }
+}
+
+@ApiTags('Gastos recurrentes')
+@ApiBearerAuth()
 @Controller('api/recurrentes')
 export class ProyeccionRecurrentesController {
   constructor(private readonly recurrentes: GastosRecurrentesService) {}

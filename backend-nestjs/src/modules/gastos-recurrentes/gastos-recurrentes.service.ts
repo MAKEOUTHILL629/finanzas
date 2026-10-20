@@ -1,5 +1,6 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { Decimal } from '../../config/decimal.config';
 import {
   EstadoPeriodoRecurrente,
   EstadoTransaccion,
@@ -19,7 +20,9 @@ import {
   assertTarjeta,
 } from '../../common/utils/ownership.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { normalizarComercio } from '../notificaciones-correo/comercio.util';
 import { TransaccionesService } from '../transacciones/transacciones.service';
+import { CargoSerie, detectarCandidatos } from './detector-recurrentes.util';
 import {
   CreatePlantillaRecurrenteDto,
   RegistrarPagoPeriodoDto,
@@ -275,6 +278,87 @@ export class GastosRecurrentesService {
       where: { id: BigInt(id) },
       include: { plantilla: { select: { id: true, nombre: true } }, movimientos: true },
     });
+  }
+
+  // ───────────────────────────── Radar de suscripciones (Fase 3) ─────────────────────────────
+
+  /**
+   * Correlaciona compras a 1 cuota + egresos de los últimos N meses y detecta pagos recurrentes.
+   * Cruza contra plantillas y recurrentes-por-persona ya registrados. Sin escrituras.
+   */
+  async detectarPagosRecurrentesPorCorrelacion(ownerUserId: bigint, mesesVentana = 6) {
+    const desde = new Date();
+    desde.setUTCMonth(desde.getUTCMonth() - mesesVentana);
+    const [compras, transacciones, plantillas, recurrentesPersona] = await Promise.all([
+      this.prisma.comprasCredito.findMany({
+        where: { owner_user_id: ownerUserId, numero_cuotas: 1, fecha_compra: { gte: desde } },
+        select: { concepto: true, comercio_canonico: true, fecha_compra: true, valor_compra: true },
+      }),
+      this.prisma.transacciones.findMany({
+        // Solo EGRESO directo: PAGO_TARJETA excluiría duplicar las compras TC.
+        where: { owner_user_id: ownerUserId, tipo_transaccion: TipoTransaccion.EGRESO, estado: { not: EstadoTransaccion.ANULADO }, fecha_transaccion: { gte: desde } },
+        select: { concepto: true, comercio_canonico: true, fecha_transaccion: true, monto_cop: true },
+      }),
+      this.prisma.plantillasRecurrentes.findMany({ where: { owner_user_id: ownerUserId }, select: { nombre: true, is_active: true } }),
+      this.prisma.cargosRecurrentesPersona.findMany({ where: { owner_user_id: ownerUserId, activo: true }, select: { concepto: true } }),
+    ]);
+    const cargos: CargoSerie[] = [
+      ...compras.filter((c) => c.fecha_compra).map((c) => ({ fecha: c.fecha_compra as Date, monto: toDecimal(c.valor_compra), descripcion: c.concepto ?? '', comercioCanonico: c.comercio_canonico })),
+      ...transacciones.map((t) => ({ fecha: t.fecha_transaccion, monto: toDecimal(t.monto_cop), descripcion: t.concepto ?? '', comercioCanonico: t.comercio_canonico })),
+    ];
+    const candidatos = detectarCandidatos(cargos);
+    const registradas = new Set(plantillas.filter((p) => p.is_active).map((p) => normalizarComercio(p.nombre)));
+    const pendientesCancelar = new Set(plantillas.filter((p) => !p.is_active).map((p) => normalizarComercio(p.nombre)));
+    const compartidas = new Set(recurrentesPersona.map((r) => normalizarComercio(r.concepto)));
+
+    const enriquecidos = candidatos.map((c) => ({
+      ...c,
+      montoPromedio: money(c.montoPromedio),
+      ultimoMonto: money(c.ultimoMonto),
+      montoMensualizado: money(c.montoMensualizado),
+      estadoDetectado: pendientesCancelar.has(c.clave)
+        ? 'PENDIENTE_CANCELACION'
+        : registradas.has(c.clave) || compartidas.has(c.clave)
+          ? 'REGISTRADA'
+          : 'NUEVA_SUSCRIPCION_DETECTADA',
+      alertaProxima: c.proximaFechaEstimada.getTime() - Date.now() <= 5 * 86_400_000 && c.proximaFechaEstimada.getTime() >= Date.now(),
+    }));
+    const activas = enriquecidos.filter((c) => c.estadoDetectado !== 'PENDIENTE_CANCELACION');
+    const mensual = activas.reduce((acc, c) => acc.plus(c.montoMensualizado), new Decimal(0));
+    return {
+      mesesVentana,
+      candidatos: enriquecidos,
+      kpis: {
+        gastoMensualDetectado: money(mensual),
+        impactoAnualProyectado: money(mensual.mul(12)),
+        suscripcionesOcultas: enriquecidos.filter((c) => c.estadoDetectado === 'NUEVA_SUSCRIPCION_DETECTADA').length,
+        totalDetectadas: enriquecidos.length,
+      },
+    };
+  }
+
+  /**
+   * «Marcar para cancelar»: se registra como plantilla inactiva con el nombre del comercio.
+   * El radar la reconoce como PENDIENTE_CANCELACION y avisa si vuelve a entrar un cargo.
+   */
+  async marcarParaCancelar(ownerUserId: bigint, dto: { comercio: string; monto?: number | string; frecuencia?: string }) {
+    const nombre = dto.comercio.trim();
+    if (!nombre) throw datosInvalidos({ comercio: ['comercio es obligatorio'] });
+    const existente = await this.prisma.plantillasRecurrentes.findFirst({ where: { owner_user_id: ownerUserId, nombre } });
+    if (existente) {
+      await this.prisma.plantillasRecurrentes.update({ where: { id: existente.id }, data: { is_active: false } });
+      return { comercio: nombre, estado: 'PENDIENTE_CANCELACION' };
+    }
+    await this.prisma.plantillasRecurrentes.create({
+      data: {
+        owner_user_id: ownerUserId,
+        nombre,
+        frecuencia: dto.frecuencia ?? FrecuenciaRecurrente.MENSUAL,
+        monto_base_estimado: toDbMoney(toDecimal(dto.monto ?? 0)),
+        is_active: false,
+      },
+    });
+    return { comercio: nombre, estado: 'PENDIENTE_CANCELACION' };
   }
 
   // ───────────────────────────── helpers ─────────────────────────────

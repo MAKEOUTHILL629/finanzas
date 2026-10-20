@@ -4,12 +4,13 @@ import {
   PeriodosRecurrentesController,
   PlantillasRecurrentesController,
   ProyeccionRecurrentesController,
+  RadarSuscripcionesController,
 } from './gastos-recurrentes.controller';
 import { GastosRecurrentesService } from './gastos-recurrentes.service';
 
 @Module({
   imports: [TransaccionesModule],
-  controllers: [PlantillasRecurrentesController, PeriodosRecurrentesController, ProyeccionRecurrentesController],
+  controllers: [PlantillasRecurrentesController, PeriodosRecurrentesController, ProyeccionRecurrentesController, RadarSuscripcionesController],
   providers: [GastosRecurrentesService],
   exports: [GastosRecurrentesService],
 })
