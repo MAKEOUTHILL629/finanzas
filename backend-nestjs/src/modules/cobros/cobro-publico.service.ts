@@ -131,6 +131,67 @@ export class CobroPublicoService {
     return this.objeciones.crear(enlace, dto);
   }
 
+  // ───────────────────────────── Portal del acreedor (Fase 6) ─────────────────────────────
+
+  /**
+   * Vista pública de un préstamo POR_PAGAR por su token: cuánto se debía, abonos con su cuenta
+   * destino y comprobantes. Sin JWT; el token (único, aleatorio) es la credencial.
+   */
+  async verComprobantePrestamo(token: string) {
+    const prestamo = await this.prestamoPorToken(token);
+    this.limitar(`prestamo:${token}`, 60, 60_000);
+    const abonos = await this.prisma.abonosPrestamoPasivo.findMany({ where: { prestamo_id: prestamo.id }, orderBy: { fecha_hora_pago: 'asc' } });
+    const totalAbonado = abonos.reduce((acc, a) => acc.plus(toDecimal(a.monto)), new Decimal(0));
+    const saldo = money(toDecimal(prestamo.saldo_pendiente ?? prestamo.valor_prestado));
+    const ultimo = abonos[abonos.length - 1];
+    return {
+      tipo: 'PORTAL_ACREEDOR' as const,
+      estadoPrestamo: saldo.greaterThan(0) ? 'ABONO_PARCIAL_REALIZADO' : 'PAGADO TOTALMENTE',
+      concepto: prestamo.concepto,
+      acreedor: prestamo.responsable_ref?.nombre ?? null,
+      valorInicial: money(toDecimal(prestamo.valor_prestado)),
+      totalAbonado: money(totalAbonado),
+      saldoPendiente: saldo,
+      fechaCompromisoPago: prestamo.fecha_compromiso_pago,
+      cuentaDestinoTercero: prestamo.cuenta_destino_tercero,
+      ultimoPago: ultimo
+        ? {
+            monto: money(toDecimal(ultimo.monto)),
+            fechaHoraPago: ultimo.fecha_hora_pago,
+            cuentaDestinoDetalle: ultimo.cuenta_destino_detalle,
+            conComprobante: ultimo.comprobante_tamano !== null,
+            comprobanteUrl: ultimo.comprobante_tamano !== null ? `/api/publico/comprobante-prestamo/${token}/abonos/${Number(ultimo.id)}/comprobante` : null,
+          }
+        : null,
+      historialAbonos: abonos.map((a) => ({
+        id: Number(a.id),
+        monto: money(toDecimal(a.monto)),
+        fechaHoraPago: a.fecha_hora_pago,
+        cuentaDestinoDetalle: a.cuenta_destino_detalle,
+        conComprobante: a.comprobante_tamano !== null,
+        comprobanteUrl: a.comprobante_tamano !== null ? `/api/publico/comprobante-prestamo/${token}/abonos/${Number(a.id)}/comprobante` : null,
+      })),
+    };
+  }
+
+  async comprobantePrestamo(token: string, abonoId: number) {
+    const prestamo = await this.prestamoPorToken(token);
+    this.limitar(`prestamo-archivo:${token}`, 30, 60_000);
+    const abono = await this.prisma.abonosPrestamoPasivo.findFirst({ where: { id: BigInt(abonoId), prestamo_id: prestamo.id } });
+    if (!abono?.comprobante || !abono.comprobante_tipo) throw new NotFoundException(ENLACE_INVALIDO);
+    return { datos: Buffer.from(abono.comprobante), tipo: abono.comprobante_tipo, nombre: abono.comprobante_nombre ?? 'comprobante' };
+  }
+
+  private async prestamoPorToken(token: string) {
+    if (!/^[A-Za-z0-9_-]{20,64}$/.test(token)) throw new NotFoundException(ENLACE_INVALIDO);
+    const prestamo = await this.prisma.prestamos.findFirst({
+      where: { token_consulta_publica: token, direccion_prestamo: 'POR_PAGAR' },
+      include: { responsable_ref: { select: { nombre: true } } },
+    });
+    if (!prestamo) throw new NotFoundException(ENLACE_INVALIDO);
+    return prestamo;
+  }
+
   /** Imagen QR de un medio de pago activo del propietario del enlace. */
   async qrMetodo(token: string, metodoId: number) {
     const enlace = await this.enlaceVigente(token);

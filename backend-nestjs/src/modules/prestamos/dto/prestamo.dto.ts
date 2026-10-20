@@ -17,6 +17,7 @@ import {
   EstadoPrestamo,
   MetodoPrestamo,
 } from '../../../common/enums/finance.enums';
+import { IsMoney } from '../../../common/validators/is-money.decorator';
 
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 const FECHA_MSG = 'La fecha debe tener formato yyyy-MM-dd';
@@ -73,6 +74,16 @@ export class CreatePrestamoDto {
   @IsBoolean()
   esRecurrenteMensual?: boolean;
 
+  @ApiPropertyOptional({ example: '2026-11-15', description: 'Fecha compromiso de pago (préstamos POR_PAGAR, Fase 6)' })
+  @IsOptional()
+  @Matches(FECHA, { message: FECHA_MSG })
+  fechaCompromisoPago?: string;
+
+  @ApiPropertyOptional({ example: 'Nequi 3001234567 - Cuñada', description: 'Cuenta/billetera destino del acreedor (Fase 6)' })
+  @IsOptional()
+  @IsString()
+  cuentaDestinoTercero?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
@@ -110,6 +121,43 @@ export class UpdatePrestamoDto {
   @IsOptional()
   @Matches(FECHA, { message: FECHA_MSG })
   fechaCobro?: string;
+
+  @ApiPropertyOptional({ example: '2026-11-15' })
+  @IsOptional()
+  @Matches(FECHA, { message: FECHA_MSG })
+  fechaCompromisoPago?: string;
+
+  @ApiPropertyOptional({ example: 'Nequi 3001234567 - Cuñada' })
+  @IsOptional()
+  @IsString()
+  cuentaDestinoTercero?: string;
+}
+
+/** `POST /api/v2/prestamos/:id/abonos-con-comprobante` (Fase 6) */
+export class AbonoPrestamoPasivoDto {
+  @ApiProperty({ example: '200000.00' })
+  @IsMoney({ maxDecimals: 2, positive: true })
+  monto: number | string;
+
+  @ApiPropertyOptional({ example: 'Nequi 3001234567 - Cuñada', description: 'Cuenta de ella a la que se envió (por defecto, la del préstamo)' })
+  @IsOptional()
+  @IsString()
+  cuentaDestinoDetalle?: string;
+
+  @ApiPropertyOptional({ description: 'Cuenta tuya desde la que salió el dinero (crea el egreso)' })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  cuentaOrigenId?: number;
+
+  @ApiPropertyOptional({ description: 'Comprobante en base64: { nombre, tipo, datos }' })
+  @IsOptional()
+  comprobante?: { nombre: string; tipo: string; datos: string };
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  observaciones?: string;
 }
 
 /** `PATCH /api/v2/prestamos/:id/aprobaciones/:aprobacionId` */

@@ -1,4 +1,5 @@
 import { ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { EstadoAprobacion, EstadoPrestamo } from '../../common/enums/finance.enums';
 import { parseIsoDate, todayLocal } from '../../common/utils/date.util';
@@ -94,6 +95,10 @@ export class PrestamosService {
         metodo: dto.metodo ?? null,
         corte_id: corteId,
         creado_por_persona_id: miPersona?.id ?? null,
+        fecha_compromiso_pago: dto.fechaCompromisoPago ? parseIsoDate(dto.fechaCompromisoPago) : null,
+        cuenta_destino_tercero: dto.cuentaDestinoTercero?.trim() || null,
+        // Token del portal público del acreedor (Fase 6): largo y aleatorio, único.
+        token_consulta_publica: (dto.direccionPrestamo ?? 'POR_COBRAR') === 'POR_PAGAR' ? randomBytes(24).toString('hex') : null,
       },
     });
     return idNum(creado.id);
@@ -129,6 +134,12 @@ export class PrestamosService {
         if (saldo.isNegative()) throw datosInvalidos({ saldoPendiente: ['saldoPendiente no puede ser negativo'] });
         data.saldo_pendiente = toDbMoney(saldo);
       }
+      if (dto.fechaCompromisoPago !== undefined) {
+        const f = parseIsoDate(dto.fechaCompromisoPago);
+        if (!f) throw datosInvalidos({ fechaCompromisoPago: ['fechaCompromisoPago debe tener formato yyyy-MM-dd'] });
+        data.fecha_compromiso_pago = f;
+      }
+      if (dto.cuentaDestinoTercero !== undefined) data.cuenta_destino_tercero = dto.cuentaDestinoTercero.trim() || null;
 
       const pagando = dto.estado === EstadoPrestamo.PAGADO && (actual.estado ?? '').toLowerCase() !== 'pagado';
       if (dto.estado !== undefined) data.estado = dto.estado;
@@ -282,6 +293,10 @@ export class PrestamosService {
       corteId: p.corte_id === null ? null : idNum(p.corte_id),
       creadoPorPersonaId: p.creado_por_persona_id === null ? null : idNum(p.creado_por_persona_id),
       origenCruceAporteId: p.origen_cruce_aporte_id === null ? null : idNum(p.origen_cruce_aporte_id),
+      // Fase 6: solo viaja al dueño (el portal público arma su propia vista sin este token suelto en listados ajenos).
+      fechaCompromisoPago: dateToMillis(p.fecha_compromiso_pago),
+      cuentaDestinoTercero: p.cuenta_destino_tercero,
+      tokenConsultaPublica: p.token_consulta_publica,
       aprobaciones: p.aprobaciones.map((a) => this.aprobacionJson(a)),
     };
   }

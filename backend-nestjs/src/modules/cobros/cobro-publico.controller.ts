@@ -52,3 +52,32 @@ export class CobroPublicoController {
     return new StreamableFile(q.datos);
   }
 }
+
+/**
+ * Portal público del acreedor (Fase 6): quien te prestó abre su enlace sin contraseña y ve el
+ * estado del préstamo, a qué cuenta se le pagó y los comprobantes. Ruta raíz `/api/publico`.
+ */
+@ApiTags('Portal público del acreedor')
+@Controller('api/publico')
+export class PortalAcreedorController {
+  constructor(private readonly publico: CobroPublicoService) {}
+
+  @Public()
+  @Get('comprobante-prestamo/:token')
+  @Header('Cache-Control', 'no-store')
+  @Header('X-Robots-Tag', 'noindex, nofollow')
+  @ApiOperation({ summary: 'Estado del préstamo POR_PAGAR y comprobantes para el acreedor (sin JWT)' })
+  ver(@Param('token') token: string) {
+    return this.publico.verComprobantePrestamo(token);
+  }
+
+  @Public()
+  @Get('comprobante-prestamo/:token/abonos/:abonoId/comprobante')
+  @Header('X-Robots-Tag', 'noindex, nofollow')
+  @ApiOperation({ summary: 'Descarga el comprobante de un abono' })
+  async comprobante(@Param('token') token: string, @Param('abonoId', ParseIntPipe) abonoId: number, @Res({ passthrough: true }) res: Response) {
+    const q = await this.publico.comprobantePrestamo(token, abonoId);
+    res.set({ 'Content-Type': q.tipo, 'Content-Disposition': `attachment; filename="${q.nombre}"`, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, max-age=300' });
+    return new StreamableFile(q.datos);
+  }
+}

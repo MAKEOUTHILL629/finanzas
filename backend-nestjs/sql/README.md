@@ -38,3 +38,5 @@ Las pruebas de integración (`npm run test:integration`) reconstruyen una BD de 
 | `rollback_012.sql` | Reversa manual de `012`. |
 | `013_tarjetas_terceros_y_aportes_cuota.sql` | Tarjetas prestadas (titular externo) y aportes colaborativos por cuota (Fase 5). Solo DDL aditivo. |
 | `rollback_013.sql` | Reversa manual de `013`. |
+| `014_prestamos_por_pagar_y_portal_acreedor.sql` | Prestamos POR_PAGAR: compromiso, cuenta destino, token publico y abonos con comprobante (Fase 6). Solo DDL aditivo. |
+| `rollback_014.sql` | Reversa manual de `014`. |

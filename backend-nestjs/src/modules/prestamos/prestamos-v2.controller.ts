@@ -15,19 +15,24 @@ import { ApiBearerAuth, ApiExcludeEndpoint, ApiOperation, ApiQuery, ApiTags } fr
 import { AuthenticatedUser, CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CortesCobroService } from './cortes-cobro.service';
 import {
+  AbonoPrestamoPasivoDto,
   CreateCorteCobroDto,
   ResolverAprobacionDto,
   ResolverAprobacionPorPersonaDto,
   UpdateCorteCobroDto,
   UpdatePrestamoDto,
 } from './dto/prestamo.dto';
+import { PrestamosPasivosService } from './prestamos-pasivos.service';
 import { PrestamosService } from './prestamos.service';
 
 @ApiTags('Préstamos v2')
 @ApiBearerAuth()
 @Controller('api/prestamos')
 export class PrestamosV2Controller {
-  constructor(private readonly prestamos: PrestamosService) {}
+  constructor(
+    private readonly prestamos: PrestamosService,
+    private readonly pasivos: PrestamosPasivosService,
+  ) {}
 
   @Get(':id')
   get(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
@@ -42,6 +47,19 @@ export class PrestamosV2Controller {
     @CurrentUser('userId') userId: bigint,
   ) {
     return this.prestamos.update(id, dto, userId);
+  }
+
+  @Post(':id/abonos-con-comprobante')
+  @HttpCode(201)
+  @ApiOperation({ summary: 'Registra tu pago al acreedor (préstamo POR_PAGAR) con comprobante, cuenta destino y egreso (Fase 6)' })
+  abonoConComprobante(@Param('id', ParseIntPipe) id: number, @Body() dto: AbonoPrestamoPasivoDto, @CurrentUser('userId') userId: bigint) {
+    return this.pasivos.registrarAbonoConComprobante(id, dto, userId);
+  }
+
+  @Get(':id/abonos')
+  @ApiOperation({ summary: 'Historial de abonos de un préstamo POR_PAGAR' })
+  abonos(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
+    return this.pasivos.listarAbonos(id, userId);
   }
 
   @Get(':id/aprobaciones')

@@ -404,6 +404,7 @@ describe('Contrato HTTP legacy', () => {
           // columnas Supabase + aprobaciones (superconjunto)
           direccionPrestamo: null, saldoPendiente: null, esRecurrenteMensual: null, cuotaMensualAcordada: null,
           fechaPrestamo: null, metodo: null, corteId: null, creadoPorPersonaId: null, origenCruceAporteId: null, aprobaciones: [],
+          fechaCompromisoPago: null,
         },
       ]);
 

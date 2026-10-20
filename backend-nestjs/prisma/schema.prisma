@@ -62,6 +62,7 @@ model Users {
   etiquetas                  Etiquetas[]
   reglas_auto_tag            ReglasAutoTag[]
   eventos_grupales           EventosLiquidacionGrupal[]
+  abonos_prestamos_pasivos   AbonosPrestamoPasivo[]
 }
 
 model Etiquetas {
@@ -328,6 +329,7 @@ model CuentasFinancieras {
   notificaciones        NotificacionesCorreo[]
   reportes_pago         ReportesPagoPersona[]
   metodos_pago          MetodosPagoUsuario[]
+  abonos_prestamos_pasivos AbonosPrestamoPasivo[]
 }
 
 model Categorias {
@@ -380,6 +382,7 @@ model Transacciones {
   cobros_puntuales CobrosPuntuales[]
   reportes_pago    ReportesPagoPersona[]
   aportes_colaborativos AportesColaborativosCuota[]
+  abonos_prestamos_pasivos AbonosPrestamoPasivo[]
 }
 
 model NotificacionesCorreo {
@@ -523,6 +526,10 @@ model Prestamos {
   creado_por_persona_id  BigInt?
   origen_cruce_aporte_id BigInt?
   legacy_appsheet_id     String?   @unique @db.VarChar
+  /// Fase 6 (sql/014): compromiso y destino cuando YO debo (POR_PAGAR) + token del portal del acreedor.
+  fecha_compromiso_pago  DateTime? @db.Date
+  cuenta_destino_tercero String?   @db.VarChar(150)
+  token_consulta_publica String?   @unique @db.VarChar(64)
 
   owner               Users?          @relation(fields: [owner_user_id], references: [id])
   responsable_ref     Personas?       @relation("PrestamoResponsable", fields: [responsable], references: [id])
@@ -531,6 +538,7 @@ model Prestamos {
   origen_cruce_aporte AportesDetalle? @relation("PrestamoOrigenAporte", fields: [origen_cruce_aporte_id], references: [id])
 
   aprobaciones        AprobacionesPrestamos[]
+  abonos_pasivos      AbonosPrestamoPasivo[]
   movimientos         MovimientosDeudaPersona[]
   plantillas          PlantillasRecurrentes[]
   cruces_destino      CrucesDeuda[]
@@ -928,4 +936,28 @@ model AportesColaborativosCuota {
   compra        ComprasCredito @relation(fields: [compra_credito_id], references: [id], onDelete: Cascade)
   aportante     Personas       @relation(fields: [aportante_persona_id], references: [id])
   transaccion   Transacciones? @relation(fields: [transaccion_id], references: [id])
+}
+
+
+model AbonosPrestamoPasivo {
+  id                    BigInt   @id @default(autoincrement())
+  prestamo_id           BigInt
+  owner_user_id         BigInt
+  monto                 Decimal  @db.Decimal(15, 2)
+  fecha_hora_pago       DateTime @default(now()) @db.Timestamptz(6)
+  cuenta_origen_id      BigInt?
+  cuenta_destino_detalle String? @db.VarChar(150)
+  comprobante           Bytes?
+  comprobante_nombre    String?  @db.VarChar(255)
+  comprobante_tipo      String?  @db.VarChar(40)
+  comprobante_tamano    Int?
+  comprobante_url       String?
+  transaccion_id        BigInt?
+  observaciones         String?
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+
+  prestamo      Prestamos           @relation(fields: [prestamo_id], references: [id], onDelete: Cascade)
+  owner         Users               @relation(fields: [owner_user_id], references: [id])
+  cuenta_origen CuentasFinancieras? @relation(fields: [cuenta_origen_id], references: [id])
+  transaccion   Transacciones?      @relation(fields: [transaccion_id], references: [id])
 }
