@@ -1,4 +1,4 @@
-import { normalizarComercio } from '../notificaciones-correo/comercio.util';
+import { mismoComercio, nombreLegibleComercio, normalizarComercio } from '../notificaciones-correo/comercio.util';
 
 /**
  * Lo que los formularios pre-llenan a partir del historial del usuario (plan V2, fase 4): el valor más habitual de cada campo.
@@ -45,7 +45,14 @@ export function ordenarPorUso<T>(usos: ReadonlyArray<Uso<T>>): T[] {
 
 // ───────────────────────────── comercios habituales ─────────────────────────────
 
+export interface ResponsableSugeridoPrefill {
+  personaId: number;
+  porcentajePago: string;
+  cantidadCuotas: number | null;
+}
+
 export interface CompraHistorica {
+  id?: number;
   concepto: string | null;
   /** Valor de la compra en COP. */
   valor?: number | null;
@@ -54,13 +61,20 @@ export interface CompraHistorica {
   fecha: Date | null;
   /** Ids de las personas responsables de esa compra. */
   personas: number[];
+  /** Detalle completo de responsables (opcional para Smart Pre-fill, Iteración 2 — Fase 3). */
+  responsablesDetalle?: ResponsableSugeridoPrefill[];
+  /** Si ya está vinculada a un correo. */
+  vinculada?: boolean;
 }
 
 export interface MovimientoHistorico {
+  id?: number;
   concepto: string | null;
+  valor?: number | null;
   categoriaId: number | null;
   cuentaId: number | null;
   fecha: Date | null;
+  vinculada?: boolean;
 }
 
 /** Lo que se sabe de un comercio por lo que ya se registró con él: sirve para pre-llenar el formulario al escribirlo. */
@@ -78,6 +92,46 @@ export interface ComercioHabitual {
   categoriaId: number | null;
   cuentaId: number | null;
   personaId: number | null;
+}
+
+export interface PrefillConciliacionSugerido {
+  notificacionId: number;
+  tipoDestino: 'COMPRA_CREDITO' | 'TRANSACCION_CUENTA' | 'TRANSFERENCIA_INTERNA' | 'PRESTAMO';
+  conceptoSugerido: string | null;
+  descripcionLimpia: string | null;
+  montoSugerido: string | null;
+  moneda: string;
+  fechaSugerida: string | null;
+  ultimos4: string | null;
+  esTarjetaCredito: boolean;
+  tarjetaId: number | null;
+  cuentaId: number | null;
+  categoriaId: number | null;
+  numeroCuotas: number | null;
+  responsablesSugeridos: ResponsableSugeridoPrefill[];
+  personaSugeridaId: number | null;
+  registroExistenteId: number | null;
+  registroExistenteTipo: 'COMPRA_CREDITO' | 'TRANSACCION' | null;
+  confianza: number;
+  muestrasHistoricas: number;
+  etiquetaOrigen: string | null;
+}
+
+export interface EntradaPrefillHistorial {
+  notificacionId: number;
+  comercioCrudo: string | null;
+  asunto: string | null;
+  monto: number | null;
+  moneda: string;
+  fechaCorreo: Date;
+  ultimos4: string | null;
+  esTarjetaCredito: boolean;
+  tarjetaDirectaId?: number | null;
+  cuentaDirectaId?: number | null;
+  cuentaPrincipalId?: number | null;
+  personaContraparteId?: number | null;
+  compras: ReadonlyArray<CompraHistorica>;
+  movimientos: ReadonlyArray<MovimientoHistorico>;
 }
 
 interface Registro {
@@ -150,8 +204,185 @@ export function agruparComercios(
 export function normalizarParaBuscar(texto: string): string {
   return texto
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+const VENTANA_72H_MS = 72 * 3600_000;
+const TOLERANCIA_COP = 100;
+
+/**
+ * Motor puro de Smart Pre-fill (Iteración 2 — Fase 3):
+ *  - Nivel 1: Match por comercio canónico (últimas 15 compras y 15 transacciones).
+ *  - Nivel 2: Inferencia por moda estadística de tipoDestino, tarjetaId, cuentaId, categoriaId, numeroCuotas, responsablesSugeridos y descripcionLimpia.
+ *  - Nivel 3: Match de registro existente no conciliado en ventana de ±72 horas con diferencia <= $100 COP.
+ */
+export function inferirPrefillPorHistorial(entrada: EntradaPrefillHistorial): PrefillConciliacionSugerido {
+  const textoBase = entrada.comercioCrudo ?? entrada.asunto ?? '';
+  const comercioNorm = normalizarComercio(textoBase);
+
+  const comprasCoincidentes = comercioNorm
+    ? [...entrada.compras]
+        .filter((c) => {
+          const norm = normalizarComercio(c.concepto);
+          return norm && mismoComercio(norm, comercioNorm, 0.75);
+        })
+        .sort((a, b) => aTiempo(b.fecha) - aTiempo(a.fecha))
+        .slice(0, 15)
+    : [];
+
+  const movimientosCoincidentes = comercioNorm
+    ? [...entrada.movimientos]
+        .filter((m) => {
+          const norm = normalizarComercio(m.concepto);
+          return norm && mismoComercio(norm, comercioNorm, 0.75);
+        })
+        .sort((a, b) => aTiempo(b.fecha) - aTiempo(a.fecha))
+        .slice(0, 15)
+    : [];
+
+  const muestrasHistoricas = comprasCoincidentes.length + movimientosCoincidentes.length;
+  const esTcInferida =
+    entrada.esTarjetaCredito ||
+    (entrada.tarjetaDirectaId !== null && entrada.tarjetaDirectaId !== undefined) ||
+    (comprasCoincidentes.length > movimientosCoincidentes.length && !entrada.cuentaDirectaId);
+
+  const tipoDestino: PrefillConciliacionSugerido['tipoDestino'] = esTcInferida
+    ? 'COMPRA_CREDITO'
+    : entrada.personaContraparteId
+      ? 'PRESTAMO'
+      : 'TRANSACCION_CUENTA';
+
+  const tarjetaModa = moda(comprasCoincidentes.map((c) => c.tarjetaId));
+  const cuentaModa = moda(movimientosCoincidentes.map((m) => m.cuentaId));
+  const categoriaModa = moda(movimientosCoincidentes.map((m) => m.categoriaId));
+  const cuotasModa = moda(comprasCoincidentes.map((c) => c.numeroCuotas));
+
+  const tarjetaId = entrada.tarjetaDirectaId ?? tarjetaModa ?? null;
+  const cuentaId = entrada.cuentaDirectaId ?? cuentaModa ?? entrada.cuentaPrincipalId ?? null;
+  const numeroCuotas = cuotasModa ?? (esTcInferida ? 1 : null);
+
+  // Moda de patrón de responsables en compras coincidentes
+  const patronesResp = new Map<string, { n: number; primero: number; lista: ResponsableSugeridoPrefill[] }>();
+  comprasCoincidentes.forEach((c, idx) => {
+    const det =
+      c.responsablesDetalle && c.responsablesDetalle.length > 0
+        ? c.responsablesDetalle
+        : c.personas.length > 0
+          ? c.personas.map((personaId) => ({
+              personaId,
+              porcentajePago: (Math.round((10000 / c.personas.length)) / 100).toFixed(2),
+              cantidadCuotas: c.numeroCuotas ?? 1,
+            }))
+          : [];
+    if (det.length === 0) return;
+    const clave = det
+      .map((r) => `${r.personaId}:${r.porcentajePago}:${r.cantidadCuotas ?? ''}`)
+      .sort()
+      .join('|');
+    const actual = patronesResp.get(clave);
+    if (actual) actual.n += 1;
+    else patronesResp.set(clave, { n: 1, primero: idx, lista: det });
+  });
+
+  let responsablesSugeridos: ResponsableSugeridoPrefill[] = [];
+  let mejorRespN = 0;
+  let mejorRespPrimero = Infinity;
+  for (const p of patronesResp.values()) {
+    if (p.n > mejorRespN || (p.n === mejorRespN && p.primero < mejorRespPrimero)) {
+      mejorRespN = p.n;
+      mejorRespPrimero = p.primero;
+      responsablesSugeridos = p.lista;
+    }
+  }
+
+  const personaModa = moda(comprasCoincidentes.flatMap((c) => [...new Set(c.personas)]));
+  const personaSugeridaId = entrada.personaContraparteId ?? responsablesSugeridos[0]?.personaId ?? personaModa ?? null;
+
+  const conceptosHist = [
+    ...comprasCoincidentes.map((c) => c.concepto?.trim() || null),
+    ...movimientosCoincidentes.map((m) => m.concepto?.trim() || null),
+  ];
+  const conceptoModa = moda(conceptosHist);
+  const legible = entrada.comercioCrudo ? nombreLegibleComercio(entrada.comercioCrudo) : null;
+  const descripcionLimpia = conceptoModa ?? (legible || entrada.comercioCrudo?.trim() || entrada.asunto?.trim() || null);
+
+  // Nivel 3: Match de registro existente no conciliado en ventana de ±72h y diferencia <= $100 COP
+  let registroExistenteId: number | null = null;
+  let registroExistenteTipo: 'COMPRA_CREDITO' | 'TRANSACCION' | null = null;
+  const tiempoCorreo = entrada.fechaCorreo.getTime();
+
+  if (entrada.monto !== null && entrada.monto > 0) {
+    const compraExistente = entrada.compras.find(
+      (c) =>
+        !c.vinculada &&
+        c.id !== undefined &&
+        c.fecha !== null &&
+        c.valor !== null &&
+        c.valor !== undefined &&
+        Math.abs(c.fecha.getTime() - tiempoCorreo) <= VENTANA_72H_MS &&
+        Math.abs(c.valor - entrada.monto!) <= TOLERANCIA_COP,
+    );
+    if (compraExistente?.id !== undefined) {
+      registroExistenteId = compraExistente.id;
+      registroExistenteTipo = 'COMPRA_CREDITO';
+    } else {
+      const movExistente = entrada.movimientos.find(
+        (m) =>
+          !m.vinculada &&
+          m.id !== undefined &&
+          m.fecha !== null &&
+          m.valor !== null &&
+          m.valor !== undefined &&
+          Math.abs(m.fecha.getTime() - tiempoCorreo) <= VENTANA_72H_MS &&
+          Math.abs(m.valor - entrada.monto!) <= TOLERANCIA_COP,
+      );
+      if (movExistente?.id !== undefined) {
+        registroExistenteId = movExistente.id;
+        registroExistenteTipo = 'TRANSACCION';
+      }
+    }
+  }
+
+  let confianza = 0;
+  if (muestrasHistoricas > 0) {
+    const base = Math.min(95, 70 + muestrasHistoricas * 4);
+    confianza = tarjetaId !== null || cuentaId !== null ? Math.min(98, base + 5) : base;
+  } else if (tarjetaId !== null || cuentaId !== null) {
+    confianza = 80;
+  }
+
+  const etiquetaOrigen =
+    muestrasHistoricas > 0 && descripcionLimpia
+      ? `Pre-cargado según ${muestrasHistoricas} registros previos en ${descripcionLimpia} (${confianza}% coincidencia)`
+      : confianza > 0
+        ? `Sugerido por historial (${confianza}% coincidencia)`
+        : null;
+
+  const fechaBogota = new Date(entrada.fechaCorreo.getTime() - 5 * 3600_000).toISOString().slice(0, 10);
+
+  return {
+    notificacionId: entrada.notificacionId,
+    tipoDestino,
+    conceptoSugerido: descripcionLimpia,
+    descripcionLimpia,
+    montoSugerido: entrada.monto !== null && entrada.monto > 0 ? String(entrada.monto) : null,
+    moneda: entrada.moneda || 'COP',
+    fechaSugerida: fechaBogota,
+    ultimos4: entrada.ultimos4,
+    esTarjetaCredito: esTcInferida,
+    tarjetaId,
+    cuentaId,
+    categoriaId: categoriaModa,
+    numeroCuotas,
+    responsablesSugeridos,
+    personaSugeridaId,
+    registroExistenteId,
+    registroExistenteTipo,
+    confianza,
+    muestrasHistoricas,
+    etiquetaOrigen,
+  };
 }

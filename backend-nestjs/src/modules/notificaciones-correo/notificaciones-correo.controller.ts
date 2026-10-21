@@ -152,6 +152,14 @@ export class NotificacionesCorreoController {
     return this.reproceso.estado(jobId, userId);
   }
 
+  @Get(':id/prefill-sugerido')
+  @ApiOperation({
+    summary: 'Smart Pre-fill (Iteración 2 — Fase 3): predice producto, categoría, cuotas, responsables y concepto limpio por similitud histórica',
+  })
+  prefillSugerido(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
+    return this.notificaciones.calcularPrefillInteligente(id, userId);
+  }
+
   @Get(':id')
   get(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
     return this.notificaciones.get(id, userId);

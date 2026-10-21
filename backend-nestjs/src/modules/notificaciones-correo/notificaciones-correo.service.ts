@@ -16,11 +16,17 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ComprasCreditoService, TX_OPTIONS } from '../compras-credito/compras-credito.service';
 import { ResponsablesService } from '../compras-credito/responsables.service';
 import { PrestamosService } from '../prestamos/prestamos.service';
+import { inferirPrefillPorHistorial, PrefillConciliacionSugerido } from '../sugerencias/sugerencias.util';
+import { cuentasConDebitos, soloCredito } from '../tarjetas/tipos-tarjeta.util';
 import { TransaccionesService } from '../transacciones/transacciones.service';
+import { extraerUltimos4, parseMontoBancolombia } from './bancolombia-normalizer.util';
 import { clasificarIntencionCorreo } from './clasificador-correo.util';
 import { interpretarCuerpo } from './cuerpo-correo.util';
 import { ConciliarCorreoDto, IngestaCorreoDto, NotificacionesFiltroDto } from './dto/notificacion.dto';
 import { insertarNotificacionIdempotente, resolverTrmUsd } from './notificaciones.repository';
+import { encontrarPersona } from './persona-match.util';
+
+export type { PrefillConciliacionSugerido };
 
 type Tx = Prisma.TransactionClient;
 
@@ -102,6 +108,159 @@ export class NotificacionesCorreoService {
     const n = await this.prisma.notificacionesCorreo.findFirst({ where: { id: BigInt(id), owner_user_id: ownerUserId } });
     if (!n) throw new NotFoundException(`Notificación ${id} no encontrada`);
     return n;
+  }
+
+  /**
+   * Smart Pre-fill (Iteración 2 — Fase 3): calcula los campos sugeridos para conciliar un correo en 1 clic,
+   * combinando los datos extraídos del correo/cuerpo con la moda estadística del historial (últimas 15 compras/movimientos
+   * del mismo comercio canónico) y la detección de registros existentes en ventana de ±72h.
+   */
+  async calcularPrefillInteligente(id: number, ownerUserId: bigint): Promise<PrefillConciliacionSugerido> {
+    const notificacion = await this.get(id, ownerUserId);
+    const datos = (notificacion.datos_parseados ?? {}) as Record<string, unknown>;
+    const interpretado = interpretarDatosParseados(datos);
+    const cuerpo = interpretarCuerpo(notificacion.cuerpo_extraido);
+
+    const monto =
+      interpretado.monto ??
+      (notificacion.monto_original ? toDecimal(notificacion.monto_original) : null) ??
+      parseMontoBancolombia(notificacion.cuerpo_extraido ?? '');
+
+    const ultimos4 =
+      interpretado.ultimos4 ??
+      notificacion.ultimos_4 ??
+      extraerUltimos4([notificacion.cuerpo_extraido ?? '', notificacion.asunto ?? '']);
+
+    const comercioCrudo =
+      interpretado.comercio ??
+      cuerpo.contraparte?.nombre ??
+      notificacion.comercio_normalizado ??
+      notificacion.asunto ??
+      null;
+
+    const esTarjetaCredito =
+      interpretado.esTarjetaCredito ||
+      notificacion.tarjeta_id !== null ||
+      /t\.?\s*cred|tarjeta de cr[eé]dito/i.test(notificacion.cuerpo_extraido ?? '');
+
+    const [cuentasBase, todasTarjetas, personas, compras, transacciones] = await Promise.all([
+      this.prisma.cuentasFinancieras.findMany({
+        where: { owner_user_id: ownerUserId, is_active: { not: false } },
+        select: { id: true, ultimos_4_digitos: true, moneda: true, es_principal: true },
+      }),
+      this.prisma.tarjetas.findMany({
+        where: { owner_user_id: ownerUserId },
+      }),
+      this.prisma.personas.findMany({
+        where: { owner_user_id: ownerUserId },
+        select: { id: true, nombre: true, numero_celular: true },
+      }),
+      this.prisma.comprasCredito.findMany({
+        where: { owner_user_id: ownerUserId, concepto: { not: null } },
+        select: {
+          id: true,
+          concepto: true,
+          valor_compra: true,
+          numero_cuotas: true,
+          tarjeta: true,
+          fecha_compra: true,
+          notificaciones: { select: { id: true }, take: 1 },
+          responsables: {
+            select: { persona: true, porcentaje_pago: true, cantidad_cuotas: true },
+            orderBy: { id: 'asc' },
+          },
+        },
+        orderBy: [{ fecha_compra: 'desc' }, { id: 'desc' }],
+        take: 500,
+      }),
+      this.prisma.transacciones.findMany({
+        where: { owner_user_id: ownerUserId, estado: { not: EstadoTransaccion.ANULADO } },
+        select: {
+          id: true,
+          concepto: true,
+          monto_cop: true,
+          categoria_id: true,
+          cuenta_origen_id: true,
+          fecha_transaccion: true,
+          notificaciones: { select: { id: true }, take: 1 },
+        },
+        orderBy: [{ fecha_transaccion: 'desc' }, { id: 'desc' }],
+        take: 500,
+      }),
+    ]);
+
+    const tarjetasCredito = soloCredito(todasTarjetas);
+    const cuentas = cuentasConDebitos(cuentasBase, todasTarjetas);
+
+    const tarjetaPorDigitos = ultimos4
+      ? tarjetasCredito.filter((t) => t.ultimos_4_digitos === ultimos4)
+      : [];
+    const cuentaPorDigitos = ultimos4
+      ? cuentas.filter((c) => c.ultimos_4_digitos === ultimos4)
+      : [];
+
+    const tarjetaDirectaId =
+      notificacion.tarjeta_id !== null && notificacion.tarjeta_id !== undefined
+        ? Number(notificacion.tarjeta_id)
+        : tarjetaPorDigitos.length === 1
+          ? Number(tarjetaPorDigitos[0].id)
+          : null;
+
+    const cuentaDirectaId =
+      notificacion.cuenta_id !== null && notificacion.cuenta_id !== undefined
+        ? Number(notificacion.cuenta_id)
+        : cuentaPorDigitos.length === 1
+          ? Number(cuentaPorDigitos[0].id)
+          : null;
+
+    const cuentaPrincipal = cuentas.find((c) => c.es_principal === true) ?? cuentas[0] ?? null;
+    const personaContraparte = encontrarPersona(personas, {
+      nombre: cuerpo.contraparte?.nombre ?? interpretado.comercio ?? null,
+      celular: cuerpo.contraparte?.celular ?? null,
+    });
+
+    return inferirPrefillPorHistorial({
+      notificacionId: id,
+      comercioCrudo,
+      asunto: notificacion.asunto,
+      monto: monto ? Number(monto.toString()) : null,
+      moneda: interpretado.moneda || notificacion.moneda || 'COP',
+      fechaCorreo: notificacion.fecha_correo,
+      ultimos4,
+      esTarjetaCredito,
+      tarjetaDirectaId,
+      cuentaDirectaId,
+      cuentaPrincipalId: cuentaPrincipal ? Number(cuentaPrincipal.id) : null,
+      personaContraparteId: personaContraparte ? Number(personaContraparte.id) : null,
+      compras: compras.map((c) => ({
+        id: Number(c.id),
+        concepto: c.concepto,
+        valor: c.valor_compra === null ? null : Number(c.valor_compra),
+        numeroCuotas: c.numero_cuotas,
+        tarjetaId: c.tarjeta === null ? null : Number(c.tarjeta),
+        fecha: c.fecha_compra,
+        personas: c.responsables
+          .map((r) => (r.persona === null ? null : Number(r.persona)))
+          .filter((p): p is number => p !== null),
+        responsablesDetalle: c.responsables
+          .filter((r): r is typeof r & { persona: bigint } => r.persona !== null)
+          .map((r) => ({
+            personaId: Number(r.persona),
+            porcentajePago: toDecimal(r.porcentaje_pago).toFixed(2),
+            cantidadCuotas: r.cantidad_cuotas,
+          })),
+        vinculada: c.notificaciones.length > 0,
+      })),
+      movimientos: transacciones.map((t) => ({
+        id: Number(t.id),
+        concepto: t.concepto,
+        valor: t.monto_cop === null ? null : Number(t.monto_cop),
+        categoriaId: t.categoria_id === null ? null : Number(t.categoria_id),
+        cuentaId: t.cuenta_origen_id === null ? null : Number(t.cuenta_origen_id),
+        fecha: t.fecha_transaccion,
+        vinculada: t.notificaciones.length > 0,
+      })),
+    });
   }
 
   /**

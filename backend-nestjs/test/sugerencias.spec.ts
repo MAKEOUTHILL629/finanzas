@@ -1,6 +1,6 @@
-import { agruparComercios, moda, normalizarParaBuscar, ordenarPorUso } from '../src/modules/sugerencias/sugerencias.util';
+import { agruparComercios, inferirPrefillPorHistorial, moda, normalizarParaBuscar, ordenarPorUso } from '../src/modules/sugerencias/sugerencias.util';
 
-const compra = (concepto: string | null, fecha: string, extra: Partial<{ numeroCuotas: number | null; tarjetaId: number | null; personas: number[]; valor: number | null }> = {}) => ({
+const compra = (concepto: string | null, fecha: string, extra: Partial<{ id: number; numeroCuotas: number | null; tarjetaId: number | null; personas: number[]; valor: number | null; vinculada: boolean }> = {}) => ({
   concepto,
   valor: 1000,
   numeroCuotas: 1,
@@ -9,7 +9,7 @@ const compra = (concepto: string | null, fecha: string, extra: Partial<{ numeroC
   personas: [],
   ...extra,
 });
-const egreso = (concepto: string | null, fecha: string, extra: Partial<{ categoriaId: number | null; cuentaId: number | null }> = {}) => ({
+const egreso = (concepto: string | null, fecha: string, extra: Partial<{ id: number; valor: number | null; categoriaId: number | null; cuentaId: number | null; vinculada: boolean }> = {}) => ({
   concepto,
   categoriaId: null,
   cuentaId: null,
@@ -109,5 +109,55 @@ describe('agruparComercios', () => {
     const r = agruparComercios([compra(null, '2026-10-01'), compra('   ', '2026-10-01'), { ...compra('Tienda', '2026-10-01'), fecha: null }], [egreso(null, '2026-10-01')]);
     expect(r.map((c) => c.concepto)).toEqual(['Tienda']);
     expect(r[0].ultimaFecha).toBeNull();
+  });
+});
+
+describe('inferirPrefillPorHistorial (Iteración 2 — Fase 3)', () => {
+  it('predice tarjeta, cuotas, responsables, descripción limpia y registro existente en ventana de ±72h', () => {
+    const prefill = inferirPrefillPorHistorial({
+      notificacionId: 90,
+      comercioCrudo: 'DL*DIDI FOOD CO',
+      asunto: 'Compra Bancolombia',
+      monto: 42500,
+      moneda: 'COP',
+      fechaCorreo: new Date('2026-10-15T18:00:00Z'),
+      ultimos4: '7022',
+      esTarjetaCredito: true,
+      compras: [
+        {
+          id: 501,
+          concepto: 'Didi Food',
+          valor: 42550, // diferencia <= 100 COP y dentro de ±72h, no vinculada
+          numeroCuotas: 1,
+          tarjetaId: 11,
+          fecha: new Date('2026-10-14T18:00:00Z'),
+          personas: [8],
+          responsablesDetalle: [{ personaId: 8, porcentajePago: '50.00', cantidadCuotas: 1 }],
+          vinculada: false,
+        },
+        {
+          id: 499,
+          concepto: 'Didi Food',
+          valor: 38000,
+          numeroCuotas: 1,
+          tarjetaId: 11,
+          fecha: new Date('2026-10-01T18:00:00Z'),
+          personas: [8],
+          responsablesDetalle: [{ personaId: 8, porcentajePago: '50.00', cantidadCuotas: 1 }],
+          vinculada: true,
+        },
+      ],
+      movimientos: [],
+    });
+
+    expect(prefill.tipoDestino).toBe('COMPRA_CREDITO');
+    expect(prefill.descripcionLimpia).toBe('Didi Food');
+    expect(prefill.tarjetaId).toBe(11);
+    expect(prefill.numeroCuotas).toBe(1);
+    expect(prefill.responsablesSugeridos).toEqual([{ personaId: 8, porcentajePago: '50.00', cantidadCuotas: 1 }]);
+    expect(prefill.registroExistenteId).toBe(501);
+    expect(prefill.registroExistenteTipo).toBe('COMPRA_CREDITO');
+    expect(prefill.confianza).toBeGreaterThanOrEqual(75);
+    expect(prefill.etiquetaOrigen).toContain('Didi Food');
   });
 });
