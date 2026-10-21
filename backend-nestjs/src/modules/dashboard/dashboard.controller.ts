@@ -1,7 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { DashboardService } from './dashboard.service';
+import { DashboardService, FiltroAnaliticaAvanzadaInput } from './dashboard.service';
 
 @ApiTags('Dashboard')
 @ApiBearerAuth()
@@ -19,5 +19,13 @@ export class DashboardController {
   @ApiQuery({ name: 'periodo', required: false, example: '2026-10', description: 'YYYY-MM; por defecto el mes actual' })
   summary(@Query('periodo') periodo: string | undefined, @CurrentUser('userId') userId: bigint) {
     return this.dashboard.resumen(userId, periodo || undefined);
+  }
+
+  @Get('analitica-avanzada')
+  @ApiOperation({
+    summary: 'Iteración 2 — Fase 6: Suite analítica multi-filtro con series temporales, categorías->comercios, proyección 12M de tarjetas, mapa de calor y cascada mensual',
+  })
+  analiticaAvanzada(@Query() query: FiltroAnaliticaAvanzadaInput, @CurrentUser('userId') userId: bigint) {
+    return this.dashboard.analiticaAvanzada(userId, query);
   }
 }

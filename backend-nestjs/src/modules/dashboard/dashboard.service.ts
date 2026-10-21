@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { isValidPeriodo, periodoActual, todayLocal } from '../../common/utils/date.util';
+import { isValidPeriodo, parseIsoDate, periodoActual, todayLocal } from '../../common/utils/date.util';
 import { money, toDecimal } from '../../common/utils/decimal.util';
 import { idNum } from '../../common/utils/legacy-format.util';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
+import { addMesesPeriodo } from '../../common/utils/periodo.util';
 import { Decimal } from '../../config/decimal.config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EstadoCuentaPersonasService } from '../estado-cuenta-personas/estado-cuenta-personas.service';
@@ -19,6 +20,37 @@ const NO_PAGADA = Prisma.raw(`UPPER(COALESCE(cd.estado, '')) NOT IN ('PAGADO', '
 
 const cero = () => new Decimal(0);
 const suma = (xs: Decimal[]): Decimal => money(xs.reduce((a, x) => a.plus(x), cero()));
+
+export type GranularidadAnalitica = 'DIA' | 'SEMANA' | 'MES';
+
+export interface FiltroAnaliticaAvanzadaInput {
+  fechaInicio?: string;
+  fechaFin?: string;
+  granularidad?: GranularidadAnalitica;
+  cuentaIds?: string | string[] | number[];
+  tarjetaIds?: string | string[] | number[];
+  categoriaIds?: string | string[] | number[];
+  personaIds?: string | string[] | number[];
+  soloGastoPropio?: string | boolean;
+  incluirTransferenciasInternas?: string | boolean;
+}
+
+function parseIdsFiltro(v: string | string[] | number[] | undefined): number[] {
+  if (!v) return [];
+  const raw = Array.isArray(v) ? v.flatMap((x) => String(x).split(',')) : String(v).split(',');
+  return raw
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isInteger(n) && n > 0);
+}
+
+function parseBoolFiltro(v: string | boolean | undefined, defecto = false): boolean {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') return ['true', '1', 'si', 'sí'].includes(v.trim().toLowerCase());
+  return defecto;
+}
+
+const COLORES_CATEGORIA_FALLBACK = ['#007AFF', '#34C759', '#5856D6', '#FF9500', '#FF2D55', '#32ADE6', '#AF52DE', '#FF3B30'];
+const NOMBRES_DIA_SEMANA = ['', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
 
 interface FilaExtracto {
   tarjeta_id: bigint;
@@ -145,6 +177,333 @@ export class DashboardService {
       proximosVencimientos: this.vencimientos(tarjetasResumen),
       movimientosRecientes: movimientos,
       alertas,
+    };
+  }
+
+  // ───────────────────────────── Iteración 2 — Fase 6: Analítica Avanzada Multi-Filtro ─────────────────────────────
+
+  async analiticaAvanzada(ownerUserId: bigint, query: FiltroAnaliticaAvanzadaInput = {}, ahora: Date = new Date()) {
+    const granularidad: GranularidadAnalitica =
+      query.granularidad === 'DIA' || query.granularidad === 'SEMANA' || query.granularidad === 'MES' ? query.granularidad : 'MES';
+    const cuentaIds = parseIdsFiltro(query.cuentaIds);
+    const tarjetaIds = parseIdsFiltro(query.tarjetaIds);
+    const categoriaIds = parseIdsFiltro(query.categoriaIds);
+    const personaIds = parseIdsFiltro(query.personaIds);
+    const soloGastoPropio = parseBoolFiltro(query.soloGastoPropio, false);
+    const incluirTransferenciasInternas = parseBoolFiltro(query.incluirTransferenciasInternas, false);
+
+    const hoy = todayLocal(ahora);
+    const fechaFin = (query.fechaFin ? parseIsoDate(query.fechaFin.slice(0, 10)) : null) ?? new Date(Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth() + 1, 0, 23, 59, 59));
+    const fechaInicioDefault = new Date(Date.UTC(fechaFin.getUTCFullYear(), fechaFin.getUTCMonth() - 5, 1, 0, 0, 0));
+    const fechaInicio = (query.fechaInicio ? parseIsoDate(query.fechaInicio.slice(0, 10)) : null) ?? fechaInicioDefault;
+
+    const duracionMs = Math.max(86_400_000, fechaFin.getTime() - fechaInicio.getTime());
+    const fechaInicioAnterior = new Date(fechaInicio.getTime() - duracionMs);
+    const fechaFinAnterior = new Date(fechaInicio.getTime() - 1);
+
+    const periodoRef = `${fechaFin.getUTCFullYear()}-${String(fechaFin.getUTCMonth() + 1).padStart(2, '0')}`;
+
+    const [transaccionesRango, transaccionesPrevias, categoriasCatalogo, tarjetasCatalogo, extractos12M, flujoActual, estadoPersonas, prestamosActivos] =
+      await Promise.all([
+        this.prisma.transacciones.findMany({
+          where: {
+            owner_user_id: ownerUserId,
+            estado: 'CONFIRMADO',
+            fecha_transaccion: { gte: fechaInicio, lte: fechaFin },
+            ...(cuentaIds.length > 0
+              ? {
+                  OR: [
+                    { cuenta_origen_id: { in: cuentaIds.map((id) => BigInt(id)) } },
+                    { cuenta_destino_id: { in: cuentaIds.map((id) => BigInt(id)) } },
+                  ],
+                }
+              : {}),
+            ...(categoriaIds.length > 0 ? { categoria_id: { in: categoriaIds.map((id) => BigInt(id)) } } : {}),
+          },
+          orderBy: { fecha_transaccion: 'asc' },
+        }),
+        this.prisma.transacciones.findMany({
+          where: {
+            owner_user_id: ownerUserId,
+            estado: 'CONFIRMADO',
+            fecha_transaccion: { gte: fechaInicioAnterior, lte: fechaFinAnterior },
+            ...(cuentaIds.length > 0
+              ? {
+                  OR: [
+                    { cuenta_origen_id: { in: cuentaIds.map((id) => BigInt(id)) } },
+                    { cuenta_destino_id: { in: cuentaIds.map((id) => BigInt(id)) } },
+                  ],
+                }
+              : {}),
+            ...(categoriaIds.length > 0 ? { categoria_id: { in: categoriaIds.map((id) => BigInt(id)) } } : {}),
+          },
+        }),
+        this.prisma.categorias.findMany({ where: { owner_user_id: ownerUserId } }),
+        Promise.resolve(this.lookup.tarjetas(ownerUserId)).then((lista) =>
+          lista.filter((t) => t.tipo !== 'DEBITO' && !t.esGenerica && (tarjetaIds.length === 0 || tarjetaIds.includes(t.id))),
+        ),
+        this.extractosPorTarjeta(ownerUserId, periodoRef),
+        this.subledger.flujoCaja(periodoRef, ownerUserId),
+        this.estadoCuentaPersonas.listar(ownerUserId, periodoRef),
+        this.prisma.prestamos.findMany({
+          where: {
+            owner_user_id: ownerUserId,
+            estado: 'Pendiente',
+            ...(personaIds.length > 0 ? { responsable: { in: personaIds.map((id) => BigInt(id)) } } : {}),
+          },
+        }),
+      ]);
+
+    // 1. Serie Temporal (curva de flujo de caja & patrimonio con promedio móvil)
+    const buckets = new Map<
+      string,
+      { ingresos: Decimal; gastosPropios: Decimal; gastosTerceros: Decimal; transferenciasInternas: Decimal }
+    >();
+    const claveBucket = (d: Date): string => {
+      const iso = d.toISOString().slice(0, 10);
+      if (granularidad === 'DIA') return iso;
+      if (granularidad === 'SEMANA') {
+        const copia = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+        const dia = copia.getUTCDay() || 7;
+        copia.setUTCDate(copia.getUTCDate() - dia + 1);
+        return copia.toISOString().slice(0, 10);
+      }
+      return iso.slice(0, 7);
+    };
+
+    for (const tx of transaccionesRango) {
+      const k = claveBucket(tx.fecha_transaccion);
+      const b = buckets.get(k) ?? {
+        ingresos: cero(),
+        gastosPropios: cero(),
+        gastosTerceros: cero(),
+        transferenciasInternas: cero(),
+      };
+      const m = toDecimal(tx.monto_cop);
+      const esInterna = Boolean((tx as { es_transferencia_interna?: boolean }).es_transferencia_interna) || tx.tipo_transaccion === 'TRANSFERENCIA';
+      if (esInterna) {
+        if (tx.tipo_transaccion === 'EGRESO' || tx.tipo_transaccion === 'TRANSFERENCIA') {
+          b.transferenciasInternas = b.transferenciasInternas.plus(m);
+        }
+        if (incluirTransferenciasInternas) {
+          if (tx.tipo_transaccion === 'INGRESO') b.ingresos = b.ingresos.plus(m);
+          else b.gastosPropios = b.gastosPropios.plus(m);
+        }
+      } else if (tx.tipo_transaccion === 'INGRESO') {
+        b.ingresos = b.ingresos.plus(m);
+      } else if (tx.tipo_transaccion === 'EGRESO' || tx.tipo_transaccion === 'PAGO_TARJETA') {
+        b.gastosPropios = b.gastosPropios.plus(m);
+      }
+      buckets.set(k, b);
+    }
+
+    // Incorporar cuotas de tarjetas en buckets mensuales cuando la granularidad es MES
+    if (granularidad === 'MES') {
+      for (const ex of extractos12M) {
+        if (tarjetaIds.length > 0 && !tarjetaIds.includes(idNum(ex.tarjeta_id))) continue;
+        const b = buckets.get(ex.periodo);
+        if (!b) continue;
+        const totalEx = toDecimal(ex.total);
+        const tercerosEx = toDecimal(ex.terceros);
+        const propioEx = Decimal.max(cero(), totalEx.minus(tercerosEx));
+        b.gastosPropios = b.gastosPropios.plus(propioEx);
+        if (!soloGastoPropio) {
+          b.gastosTerceros = b.gastosTerceros.plus(tercerosEx);
+        }
+      }
+    }
+
+    const clavesOrdenadas = [...buckets.keys()].sort();
+    const serieTemporal = clavesOrdenadas.map((clave, idx) => {
+      const b = buckets.get(clave)!;
+      const ventana = clavesOrdenadas.slice(Math.max(0, idx - 2), idx + 1).map((c) => buckets.get(c)!.gastosPropios);
+      const promedioMovil = ventana.length > 0 ? money(suma(ventana).div(ventana.length)) : cero();
+      return {
+        periodo: clave,
+        ingresos: money(b.ingresos),
+        gastosPropios: money(b.gastosPropios),
+        gastosTerceros: money(soloGastoPropio ? cero() : b.gastosTerceros),
+        ahorroNeto: money(b.ingresos.minus(b.gastosPropios)),
+        transferenciasInternas: money(b.transferenciasInternas),
+        promedioMovilGastos: promedioMovil,
+      };
+    });
+
+    // 2. Distribución por Categorías -> Top Comercios
+    const mapaCatNombres = new Map<number, { nombre: string; color: string | null }>();
+    for (const c of categoriasCatalogo) {
+      mapaCatNombres.set(idNum(c.id), { nombre: c.nombre, color: c.color });
+    }
+
+    const gastosPorCatActual = new Map<number | null, { total: Decimal; comercios: Map<string, Decimal> }>();
+    const gastosPorCatPrevio = new Map<number | null, Decimal>();
+
+    for (const tx of transaccionesRango) {
+      const esInterna = Boolean((tx as { es_transferencia_interna?: boolean }).es_transferencia_interna) || tx.tipo_transaccion === 'TRANSFERENCIA';
+      if (esInterna && !incluirTransferenciasInternas) continue;
+      if (tx.tipo_transaccion !== 'EGRESO' && tx.tipo_transaccion !== 'PAGO_TARJETA') continue;
+      const catId = tx.categoria_id ? idNum(tx.categoria_id) : null;
+      const m = toDecimal(tx.monto_cop);
+      const entry = gastosPorCatActual.get(catId) ?? { total: cero(), comercios: new Map<string, Decimal>() };
+      entry.total = entry.total.plus(m);
+      const comercio = (tx.concepto || 'Otros').trim().slice(0, 60);
+      entry.comercios.set(comercio, (entry.comercios.get(comercio) ?? cero()).plus(m));
+      gastosPorCatActual.set(catId, entry);
+    }
+
+    for (const tx of transaccionesPrevias) {
+      const esInterna = Boolean((tx as { es_transferencia_interna?: boolean }).es_transferencia_interna) || tx.tipo_transaccion === 'TRANSFERENCIA';
+      if (esInterna && !incluirTransferenciasInternas) continue;
+      if (tx.tipo_transaccion !== 'EGRESO' && tx.tipo_transaccion !== 'PAGO_TARJETA') continue;
+      const catId = tx.categoria_id ? idNum(tx.categoria_id) : null;
+      gastosPorCatPrevio.set(catId, (gastosPorCatPrevio.get(catId) ?? cero()).plus(toDecimal(tx.monto_cop)));
+    }
+
+    const totalGastoCategorias = suma([...gastosPorCatActual.values()].map((x) => x.total));
+    const distribucionCategorias = [...gastosPorCatActual.entries()]
+      .sort((a, b) => b[1].total.comparedTo(a[1].total))
+      .map(([catId, info], idx) => {
+        const meta = catId !== null ? mapaCatNombres.get(catId) : null;
+        const previo = gastosPorCatPrevio.get(catId) ?? cero();
+        const variacionPct = previo.greaterThan(0)
+          ? Math.round(info.total.minus(previo).div(previo).times(1000).toNumber()) / 10
+          : null;
+        const porcentajeCat = totalGastoCategorias.greaterThan(0)
+          ? Math.round(info.total.div(totalGastoCategorias).times(1000).toNumber()) / 10
+          : 0;
+        const comercios = [...info.comercios.entries()]
+          .sort((a, b) => b[1].comparedTo(a[1]))
+          .slice(0, 5)
+          .map(([comercio, montoComercio]) => ({
+            comercio,
+            monto: money(montoComercio),
+            porcentaje: info.total.greaterThan(0) ? Math.round(montoComercio.div(info.total).times(1000).toNumber()) / 10 : 0,
+          }));
+        return {
+          categoriaId: catId,
+          categoria: meta?.nombre ?? 'Sin categoría',
+          color: meta?.color ?? COLORES_CATEGORIA_FALLBACK[idx % COLORES_CATEGORIA_FALLBACK.length],
+          monto: money(info.total),
+          porcentaje: porcentajeCat,
+          variacionPct,
+          comercios,
+        };
+      });
+
+    // 3. Proyección de los próximos 12 meses de cuotas de tarjetas de crédito
+    const mesesProyeccion: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      mesesProyeccion.push(addMesesPeriodo(periodoRef, i));
+    }
+
+    const proyeccionCuotasTarjetas = mesesProyeccion.map((mes) => {
+      const porTarjeta = tarjetasCatalogo.map((t) => {
+        const fila = extractos12M.find((e) => idNum(e.tarjeta_id) === t.id && e.periodo === mes);
+        const totalT = money(toDecimal(fila?.total));
+        const tercerosT = money(toDecimal(fila?.terceros));
+        const propiaT = money(Decimal.max(cero(), totalT.minus(tercerosT)));
+        return {
+          tarjetaId: t.id,
+          etiqueta: t.etiqueta,
+          partePropia: propiaT,
+          parteTerceros: soloGastoPropio ? cero() : tercerosT,
+          total: soloGastoPropio ? propiaT : totalT,
+          cupoTotal: t.cupoTotal === null ? null : money(toDecimal(t.cupoTotal)),
+        };
+      });
+      return {
+        periodo: mes,
+        partePropia: suma(porTarjeta.map((x) => x.partePropia)),
+        parteTerceros: suma(porTarjeta.map((x) => x.parteTerceros)),
+        total: suma(porTarjeta.map((x) => x.total)),
+        porTarjeta,
+      };
+    });
+
+    // 4. Mapa de calor de hábitos (Día de semana 1..7 x Semana del mes 1..5)
+    const matrizCalor = new Map<string, { diaSemana: number; semanaMes: number; monto: Decimal; cantidad: number }>();
+    for (const tx of transaccionesRango) {
+      const esInterna = Boolean((tx as { es_transferencia_interna?: boolean }).es_transferencia_interna) || tx.tipo_transaccion === 'TRANSFERENCIA';
+      if (esInterna && !incluirTransferenciasInternas) continue;
+      if (tx.tipo_transaccion !== 'EGRESO') continue;
+      const d = tx.fecha_transaccion;
+      const diaSemana = d.getUTCDay() === 0 ? 7 : d.getUTCDay();
+      const semanaMes = Math.min(5, Math.ceil(d.getUTCDate() / 7));
+      const key = `${diaSemana}-${semanaMes}`;
+      const actual = matrizCalor.get(key) ?? { diaSemana, semanaMes, monto: cero(), cantidad: 0 };
+      actual.monto = actual.monto.plus(toDecimal(tx.monto_cop));
+      actual.cantidad += 1;
+      matrizCalor.set(key, actual);
+    }
+    const mapaCalorHabitos = [...matrizCalor.values()].map((c) => ({
+      diaSemana: c.diaSemana,
+      nombreDia: NOMBRES_DIA_SEMANA[c.diaSemana] ?? 'Día',
+      semanaMes: c.semanaMes,
+      monto: money(c.monto),
+      cantidad: c.cantidad,
+    }));
+
+    // 5. Balance de Deudas y Préstamos
+    const meDebenPrestamos = suma(
+      prestamosActivos
+        .filter((p) => (p.direccion_prestamo ?? 'POR_COBRAR') === 'POR_COBRAR')
+        .map((p) => toDecimal(p.saldo_pendiente ?? p.valor_prestado)),
+    );
+    const deboPrestamosPasivos = suma(
+      prestamosActivos
+        .filter((p) => p.direccion_prestamo === 'POR_PAGAR')
+        .map((p) => toDecimal(p.saldo_pendiente ?? p.valor_prestado)),
+    );
+    const totalPorCobrarSubledger = toDecimal(estadoPersonas.totales.deudaTotal);
+    const meDebenTarjetasYCruce = Decimal.max(cero(), totalPorCobrarSubledger.minus(meDebenPrestamos));
+    const tarjetasResumenActual = this.tarjetas(tarjetasCatalogo, extractos12M, periodoRef, hoy);
+    const deboTarjetasPropias = suma(tarjetasResumenActual.map((t) => t.deudaPendienteMiParte));
+    const totalMeDeben = money(meDebenPrestamos.plus(meDebenTarjetasYCruce));
+    const totalDebo = money(deboTarjetasPropias.plus(deboPrestamosPasivos));
+
+    // 6. Cascada Mensual (Waterfall)
+    const ingresosMes = money(toDecimal(flujoActual.total_ingresos));
+    const gastosFijosRecurrentes = money(toDecimal(flujoActual.total_esperado_recurrentes));
+    const cuotasTarjetasBrutas = toDecimal(flujoActual.total_tarjetas);
+    const porCobrarTercerosMes = toDecimal(flujoActual.total_por_cobrar_terceros);
+    const cuotasTarjetasPropias = money(Decimal.max(cero(), cuotasTarjetasBrutas.minus(porCobrarTercerosMes)));
+    const gastosVariablesDirectos = money(toDecimal(flujoActual.total_egresos_directos));
+    const prestamosNeto = cero();
+    const flujoLibreReal = money(toDecimal(flujoActual.flujo_caja_libre_estimado));
+
+    return {
+      filtrosAplicados: {
+        fechaInicio: fechaInicio.toISOString().slice(0, 10),
+        fechaFin: fechaFin.toISOString().slice(0, 10),
+        granularidad,
+        cuentaIds,
+        tarjetaIds,
+        categoriaIds,
+        personaIds,
+        soloGastoPropio,
+        incluirTransferenciasInternas,
+      },
+      serieTemporal,
+      distribucionCategorias,
+      proyeccionCuotasTarjetas,
+      mapaCalorHabitos,
+      balanceDeudasYPrestamos: {
+        meDebenPrestamos: money(meDebenPrestamos),
+        meDebenTercerosTarjetasYCruces: money(meDebenTarjetasYCruce),
+        totalMeDeben,
+        deboTarjetasPropias,
+        deboPrestamosPasivos: money(deboPrestamosPasivos),
+        totalDebo,
+        posicionNeta: money(totalMeDeben.minus(totalDebo)),
+      },
+      cascadaMensual: {
+        ingresos: ingresosMes,
+        gastosFijosRecurrentes,
+        cuotasTarjetasPropias,
+        gastosVariablesDirectos,
+        prestamosNeto,
+        flujoLibreReal,
+      },
     };
   }
 
