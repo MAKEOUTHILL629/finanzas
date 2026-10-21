@@ -246,6 +246,14 @@ model ComprasCredito {
   /// Tags transversales (sql/011, Fase 2): slugs con '#', p. ej. ['#domicilios','#rappi'].
   tags                  String[]  @default([])
   comercio_canonico     String?   @db.VarChar(120)
+  /// Cómo nació la obligación maestra (sql/017): SELECCION_MANUAL | BARRIDO_FECHA_CORTE.
+  modo_unificacion          String    @default("SELECCION_MANUAL") @db.VarChar(30)
+  /// En un barrido: fecha hasta la que el banco absorbió la deuda.
+  fecha_corte_unificacion   DateTime? @db.Date
+  /// En un barrido: capital teórico en BD de las compras absorbidas al corte.
+  capital_teorico_absorbido Decimal?  @db.Decimal
+  /// En un barrido: monto del banco − capital teórico (intereses/seguros capitalizados).
+  ajuste_banco_capitalizado Decimal?  @db.Decimal
 
   tarjeta_ref Tarjetas?         @relation(fields: [tarjeta], references: [id])
   owner       Users?            @relation(fields: [owner_user_id], references: [id])

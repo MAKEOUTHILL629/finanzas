@@ -7,12 +7,13 @@ import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { resolverPlasticoCompra } from '../tarjetas/plasticos.db';
 import { ComprasCreditoService, TX_OPTIONS } from './compras-credito.service';
-import { EjecutarRefinanciamientoDto, SimularRefinanciamientoDto } from './dto/refinanciamiento.dto';
+import { EjecutarBarridoFechaDto, EjecutarRefinanciamientoDto, SimularBarridoFechaDto, SimularRefinanciamientoDto } from './dto/refinanciamiento.dto';
 import {
   CompraUnificable,
   ResultadoSimulacion,
   ResponsableDeMaestra,
   responsablesDeLaMaestra,
+  resumenBarrido,
   simularRefinanciamiento,
   totalesDeSeleccion,
 } from './refinanciamiento.util';
@@ -67,6 +68,23 @@ export interface SimulacionRefinanciamiento {
   responsables: ResponsableDeMaestra[];
 }
 
+export interface SimulacionBarridoFecha {
+  tarjetaIds: number[];
+  fechaCorte: string;
+  /** Compras detectadas automáticamente: vigentes al corte en las tarjetas indicadas. */
+  comprasDetectadas: CandidataRefinanciamiento[];
+  cantidadCompras: number;
+  /** Suma de saldos de capital en BD de las compras detectadas. */
+  capitalTeoricoDetectado: number;
+  /** Valor exacto que fijó el banco ($X). */
+  montoUnificadoBanco: number;
+  /** X − capital teórico (puede ser negativo si el banco fijó menos). */
+  ajusteDiferencia: number;
+  cuotaActualCombinada: number;
+  resultado: ResultadoSimulacion;
+  responsables: ResponsableDeMaestra[];
+}
+
 export interface DetalleRefinanciamiento {
   id: number;
   concepto: string | null;
@@ -80,6 +98,11 @@ export interface DetalleRefinanciamiento {
   cuotaMensual: number;
   cuotaPactada: number | null;
   sistemaAmortizacion: string;
+  /** SELECCION_MANUAL | BARRIDO_FECHA_CORTE (sql/017). */
+  modoUnificacion: string;
+  fechaCorteUnificacion: string | null;
+  capitalTeoricoAbsorbido: number | null;
+  ajusteBancoCapitalizado: number | null;
   tarjetaId: number | null;
   absorbidas: Array<{
     id: number;
@@ -125,6 +148,155 @@ export class RefinanciamientoService {
     return this.armarSimulacion(dto, tarjeta.dia_corte, seleccion, ahora);
   }
 
+  // ───────────────────────────── barrido por fecha de corte ─────────────────────────────
+
+  /** Simula el barrido: detecta las compras vigentes al corte y compara su capital teórico contra el valor $X del banco. */
+  async simularBarridoFecha(ownerUserId: bigint, dto: SimularBarridoFechaDto): Promise<SimulacionBarridoFecha> {
+    const fechaCorte = this.fechaCorteDe(dto);
+    const tarjetas = await this.exigirTarjetasDeCredito(this.prisma, ownerUserId, dto.tarjetaIds);
+    const detectadas = await this.cargarDetectadasBarrido(this.prisma, ownerUserId, dto.tarjetaIds, fechaCorte);
+    return this.armarSimulacionBarrido(dto, tarjetas[0].dia_corte, detectadas, fechaCorte);
+  }
+
+  /** Ejecuta el barrido en una sola transacción: crea la maestra por $X y congela las cuotas posteriores al corte. */
+  async ejecutarBarridoFecha(ownerUserId: bigint, dto: EjecutarBarridoFechaDto): Promise<DetalleRefinanciamiento & { simulacion: SimulacionBarridoFecha }> {
+    const { maestraId, simulacion } = await this.prisma.$transaction(async (tx) => {
+      const fechaCorte = this.fechaCorteDe(dto);
+      const tarjetas = await this.exigirTarjetasDeCredito(tx, ownerUserId, dto.tarjetaIds);
+      const tarjetaPrincipal = tarjetas[0];
+      const detectadas = await this.cargarDetectadasBarrido(tx, ownerUserId, dto.tarjetaIds, fechaCorte);
+      const simulacion = this.armarSimulacionBarrido(dto, tarjetaPrincipal.dia_corte, detectadas, fechaCorte);
+      const r = simulacion.resultado;
+      const periodoCorte = periodoOf(fechaCorte);
+
+      const etiqueta = [tarjetaPrincipal.franquicia, tarjetaPrincipal.descripcion].filter(Boolean).join(' ') || `tarjeta ${dto.tarjetaIds[0]}`;
+      const concepto = (dto.concepto ?? `Unificación / Refinanciamiento ${etiqueta} (Corte ${formatIsoDate(fechaCorte)})`).slice(0, 255);
+      const plasticoId = await resolverPlasticoCompra(tx, ownerUserId, tarjetaPrincipal.id, { fecha: fechaCorte });
+
+      const maestra = await tx.comprasCredito.create({
+        data: {
+          concepto,
+          valor_compra: toDbMoney(r.saldo),
+          fecha_compra: fechaCorte,
+          numero_cuotas: r.numeroCuotas,
+          fecha_ultima_cuota: r.cuotas[r.cuotas.length - 1].fechaPago,
+          pago_mensual: toDbMoney(r.cuotaUsada),
+          interes: toDbRate(r.tasaMensualPct),
+          descripcion: dto.descripcion ?? `Barrido al ${formatIsoDate(fechaCorte)}: ${detectadas.length} compras, capital teórico $${simulacion.capitalTeoricoDetectado}, ajuste del banco $${simulacion.ajusteDiferencia}`,
+          estado: 'Pendiente',
+          tarjeta: tarjetaPrincipal.id,
+          owner_user_id: ownerUserId,
+          plastico_id: plasticoId,
+          moneda_original: 'COP',
+          valor_moneda_original: toDbMoney(r.saldo),
+          tasa_cambio_aplicada: toDbRate(new Decimal(1)),
+          trm_confirmada: true,
+          es_refinanciamiento: true,
+          sistema_amortizacion: 'FRANCES',
+          cuota_fija_pactada: r.cuotaPactada ? toDbMoney(r.cuotaPactada) : null,
+          modo_unificacion: 'BARRIDO_FECHA_CORTE',
+          fecha_corte_unificacion: fechaCorte,
+          capital_teorico_absorbido: toDbMoney(toDecimal(simulacion.capitalTeoricoDetectado)),
+          ajuste_banco_capitalizado: toDbMoney(toDecimal(simulacion.ajusteDiferencia)),
+        },
+      });
+      await tx.cuotasDetalle.createMany({ data: this.compras.cuotasData(maestra.id, r.cuotas) });
+
+      // Después de las cuotas: el Trigger 6 genera los cargos de cada persona al insertar su responsabilidad.
+      for (const p of simulacion.responsables) {
+        await tx.responsablesComprasCredito.create({
+          data: {
+            persona: BigInt(p.personaId),
+            porcentaje_pago: toDbMoney(p.porcentaje),
+            cantidad_pago: toDbMoney(p.monto),
+            cantidad_cuotas: r.numeroCuotas,
+            compra_credito: maestra.id,
+          },
+        });
+      }
+
+      const ids = detectadas.map((c) => BigInt(c.id));
+      for (const c of detectadas) {
+        await tx.comprasCredito.update({
+          where: { id: BigInt(c.id) },
+          data: { estado: ESTADO_REFINANCIADA, refinanciamiento_id: maestra.id, saldo_refinanciado: toDbMoney(toDecimal(c.saldoCapital)) },
+        });
+      }
+      if (ids.length > 0) {
+        await tx.$executeRaw`
+          UPDATE "CuotasDetalle" cd SET estado = ${ESTADO_REFINANCIADA}
+          WHERE cd.compra = ANY(${ids}::int8[])
+            AND UPPER(COALESCE(cd.estado, '')) = 'PENDIENTE'
+            AND COALESCE(cd.periodo_facturacion, to_char(cd.fecha_pago, 'YYYY-MM')) > ${periodoCorte}`;
+        await tx.$executeRaw`
+          UPDATE "MovimientosDeudaPersona" m SET estado = 'ANULADO'
+          FROM "CuotasDetalle" cd
+          WHERE m.cuota_detalle_id = cd.id
+            AND cd.compra = ANY(${ids}::int8[])
+            AND cd.estado = ${ESTADO_REFINANCIADA}
+            AND m.tipo_movimiento = 'CARGO_CUOTA_TC'
+            AND COALESCE(m.estado, 'CONFIRMADO') IN ('PROYECTADO', 'CONFIRMADO')`;
+      }
+      return { maestraId: maestra.id, simulacion };
+    }, TX_OPTIONS);
+
+    return { ...(await this.detalle(ownerUserId, Number(maestraId))), simulacion };
+  }
+
+  private fechaCorteDe(dto: SimularBarridoFechaDto): Date {
+    const f = parseIsoDate(dto.fechaCorte);
+    if (!f) throw datosInvalidos({ fechaCorte: ['La fecha de corte no es válida'] });
+    return f;
+  }
+
+  private async exigirTarjetasDeCredito(db: Tx | PrismaService, ownerUserId: bigint, tarjetaIds: number[]) {
+    const tarjetas = [];
+    for (const id of [...new Set(tarjetaIds)]) tarjetas.push(await this.exigirTarjetaDeCredito(db, ownerUserId, id));
+    return tarjetas;
+  }
+
+  private async cargarDetectadasBarrido(db: Tx | PrismaService, ownerUserId: bigint, tarjetaIds: number[], fechaCorte: Date): Promise<CandidataRefinanciamiento[]> {
+    const todas: CandidataRefinanciamiento[] = [];
+    for (const tarjetaId of [...new Set(tarjetaIds)]) {
+      todas.push(...(await this.cargarCandidatas(db, ownerUserId, tarjetaId, undefined, periodoOf(fechaCorte), { periodoExclusivo: true, fechaCompraHasta: fechaCorte })));
+    }
+    return todas.sort((a, b) => (a.fechaCompra ?? '').localeCompare(b.fechaCompra ?? '') || a.id - b.id);
+  }
+
+  private armarSimulacionBarrido(dto: SimularBarridoFechaDto, diaCorte: number | null, detectadas: CandidataRefinanciamiento[], fechaCorte: Date): SimulacionBarridoFecha {
+    if (detectadas.length === 0) {
+      throw datosInvalidos({ fechaCorte: [`Ninguna compra vigente al ${formatIsoDate(fechaCorte)} en las tarjetas indicadas`] });
+    }
+    const unificables = detectadas.map(aUnificable);
+    const resumen = resumenBarrido(unificables, toDecimal(dto.montoUnificadoBanco));
+    const totales = totalesDeSeleccion(unificables);
+    const resultado = simularRefinanciamiento({
+      saldo: resumen.montoUnificadoBanco,
+      numeroCuotas: dto.numeroCuotas,
+      tasaMensualPct: dto.tasaMensual === undefined ? null : toDecimal(dto.tasaMensual),
+      tasaEfectivaAnualPct: dto.tasaEfectivaAnual === undefined ? null : toDecimal(dto.tasaEfectivaAnual),
+      cuotaPactada: dto.cuotaMensual === undefined ? null : toDecimal(dto.cuotaMensual),
+      cuotaActualCombinada: totales.cuotaActualCombinada,
+      restantePorPagar: totales.restantePorPagar,
+      fechaInicio: fechaCorte,
+      diaCorteTarjeta: diaCorte,
+      hoy: fechaCorte,
+    });
+    return {
+      tarjetaIds: [...new Set(dto.tarjetaIds)],
+      fechaCorte: formatIsoDate(fechaCorte),
+      comprasDetectadas: detectadas,
+      cantidadCompras: resumen.cantidadCompras,
+      capitalTeoricoDetectado: resumen.capitalTeorico.toNumber(),
+      montoUnificadoBanco: resumen.montoUnificadoBanco.toNumber(),
+      ajusteDiferencia: resumen.ajusteBanco.toNumber(),
+      cuotaActualCombinada: totales.cuotaActualCombinada.toNumber(),
+      resultado,
+      // Cada persona conserva su parte teórica; el ajuste del banco lo absorbe el titular.
+      responsables: responsablesDeLaMaestra(unificables, resumen.montoUnificadoBanco),
+    };
+  }
+
   /** Para una compra maestra: las que unificó. Para una absorbida: la maestra (con todo lo que unificó). `null` si no aplica. */
   async detalle(ownerUserId: bigint, compraId: number): Promise<DetalleRefinanciamiento> {
     const compra = await this.prisma.comprasCredito.findFirst({ where: { id: BigInt(compraId), owner_user_id: ownerUserId } });
@@ -148,6 +320,10 @@ export class RefinanciamientoService {
       cuotaMensual: num(maestra.cuota_fija_pactada ?? maestra.pago_mensual),
       cuotaPactada: maestra.cuota_fija_pactada === null ? null : num(maestra.cuota_fija_pactada),
       sistemaAmortizacion: maestra.sistema_amortizacion,
+      modoUnificacion: maestra.modo_unificacion ?? 'SELECCION_MANUAL',
+      fechaCorteUnificacion: dia(maestra.fecha_corte_unificacion),
+      capitalTeoricoAbsorbido: maestra.capital_teorico_absorbido === null ? null : num(maestra.capital_teorico_absorbido),
+      ajusteBancoCapitalizado: maestra.ajuste_banco_capitalizado === null ? null : num(maestra.ajuste_banco_capitalizado),
       tarjetaId: maestra.tarjeta === null ? null : Number(maestra.tarjeta),
       absorbidas: absorbidas.map((a) => ({
         id: Number(a.id),
@@ -340,8 +516,19 @@ export class RefinanciamientoService {
     };
   }
 
-  private async cargarCandidatas(db: Tx | PrismaService, ownerUserId: bigint, tarjetaId: number, ids: number[] | undefined, periodo: string): Promise<CandidataRefinanciamiento[]> {
+  private async cargarCandidatas(
+    db: Tx | PrismaService,
+    ownerUserId: bigint,
+    tarjetaId: number,
+    ids: number[] | undefined,
+    periodo: string,
+    opciones: { periodoExclusivo?: boolean; fechaCompraHasta?: Date } = {},
+  ): Promise<CandidataRefinanciamiento[]> {
     const filtroIds = ids ? Prisma.sql`AND cc.id = ANY(${ids.map((i) => BigInt(i))}::int8[])` : Prisma.empty;
+    const filtroPeriodo = opciones.periodoExclusivo
+      ? Prisma.sql`AND COALESCE(cd.periodo_facturacion, to_char(cd.fecha_pago, 'YYYY-MM')) > ${periodo}`
+      : Prisma.sql`AND COALESCE(cd.periodo_facturacion, to_char(cd.fecha_pago, 'YYYY-MM')) >= ${periodo}`;
+    const filtroFechaCompra = opciones.fechaCompraHasta ? Prisma.sql`AND cc.fecha_compra <= ${opciones.fechaCompraHasta}::date` : Prisma.empty;
     const filas = await db.$queryRaw<FilaCandidata[]>(Prisma.sql`
       SELECT cc.id, cc.concepto, cc.fecha_compra, cc.numero_cuotas, cc.valor_compra, cc.interes, cc.es_refinanciamiento, pl.ultimos_4 AS plastico,
              COALESCE(SUM(cd.aporte_capital), 0) AS saldo_capital,
@@ -352,12 +539,13 @@ export class RefinanciamientoService {
       FROM "ComprasCredito" cc
       JOIN "CuotasDetalle" cd ON cd.compra = cc.id
         AND UPPER(COALESCE(cd.estado, '')) = 'PENDIENTE'
-        AND COALESCE(cd.periodo_facturacion, to_char(cd.fecha_pago, 'YYYY-MM')) >= ${periodo}
+        ${filtroPeriodo}
       LEFT JOIN "TarjetaPlasticos" pl ON pl.id = cc.plastico_id
       WHERE cc.owner_user_id = ${ownerUserId}::int8
         AND cc.tarjeta = ${BigInt(tarjetaId)}::int8
         AND cc.refinanciamiento_id IS NULL
         AND UPPER(COALESCE(cc.estado, '')) = 'PENDIENTE'
+        ${filtroFechaCompra}
         ${filtroIds}
       GROUP BY cc.id, pl.ultimos_4
       HAVING COALESCE(SUM(cd.aporte_capital), 0) > 0

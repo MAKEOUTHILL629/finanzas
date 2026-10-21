@@ -152,6 +152,24 @@ export function simularRefinanciamiento(e: EntradaSimulacion): ResultadoSimulaci
   };
 }
 
+export interface ResumenBarrido {
+  /** Suma de saldos de capital en BD de las compras barridas al corte. */
+  capitalTeorico: Decimal;
+  /** Valor exacto que fijó el banco ($X). */
+  montoUnificadoBanco: Decimal;
+  /** X − capital teórico: intereses corrientes, seguros o cuotas de manejo capitalizados por el banco. */
+  ajusteBanco: Decimal;
+  cantidadCompras: number;
+}
+
+/** Compara el capital teórico detectado en BD contra el valor $X que fijó el banco al barrer por fecha de corte. */
+export function resumenBarrido(compras: ReadonlyArray<CompraUnificable>, montoUnificadoBanco: Decimal): ResumenBarrido {
+  const capitalTeorico = money(sumDecimals(compras.map((c) => c.saldoCapital)));
+  const monto = money(montoUnificadoBanco);
+  if (!monto.greaterThan(0)) throw datosInvalidos({ montoUnificadoBanco: ['El valor unificado por el banco debe ser mayor que cero'] });
+  return { capitalTeorico, montoUnificadoBanco: monto, ajusteBanco: money(monto.minus(capitalTeorico)), cantidadCompras: compras.length };
+}
+
 export interface ResponsableDeMaestra {
   personaId: number;
   /** % de la nueva obligación (2 decimales). */

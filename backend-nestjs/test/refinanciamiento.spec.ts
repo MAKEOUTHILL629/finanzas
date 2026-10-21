@@ -5,6 +5,7 @@ import {
   CompraUnificable,
   resolverTasaMensual,
   responsablesDeLaMaestra,
+  resumenBarrido,
   simularRefinanciamiento,
   totalesDeSeleccion,
 } from '../src/modules/compras-credito/refinanciamiento.util';
@@ -256,6 +257,27 @@ describe('totalesDeSeleccion y responsablesDeLaMaestra', () => {
     expect(suma).toBeLessThanOrEqual(100);
     expect(suma).toBeGreaterThan(99.9);
     expect(tres.every((x) => x.porcentaje.toNumber() > 33)).toBe(true);
+  });
+});
+
+describe('resumenBarrido (Fase 3 · barrido por fecha de corte)', () => {
+  const compra = (id: number, saldo: number): CompraUnificable => ({ id, saldoCapital: d(saldo), cuotaProxima: d(0), restantePorPagar: d(0), responsables: [] });
+
+  it('capital teórico = suma de saldos; ajuste = valor del banco − capital teórico', () => {
+    const r = resumenBarrido([compra(1, 1_000_000), compra(2, 2_500_000)], d(3_800_000));
+    expect(r.capitalTeorico.toNumber()).toBe(3_500_000);
+    expect(r.montoUnificadoBanco.toNumber()).toBe(3_800_000);
+    expect(r.ajusteBanco.toNumber()).toBe(300_000);
+    expect(r.cantidadCompras).toBe(2);
+  });
+
+  it('ajuste negativo si el banco fijó menos que el capital teórico; cero compras → capital 0', () => {
+    expect(resumenBarrido([compra(1, 1_000_000)], d(900_000)).ajusteBanco.toNumber()).toBe(-100_000);
+    expect(resumenBarrido([], d(500_000)).capitalTeorico.toNumber()).toBe(0);
+  });
+
+  it('el valor del banco debe ser positivo', () => {
+    expect(() => resumenBarrido([compra(1, 100)], d(0))).toThrow();
   });
 });
 

@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { CandidatasQueryDto, EjecutarRefinanciamientoDto, SimularRefinanciamientoDto } from './dto/refinanciamiento.dto';
+import { CandidatasQueryDto, EjecutarBarridoFechaDto, EjecutarRefinanciamientoDto, SimularBarridoFechaDto, SimularRefinanciamientoDto } from './dto/refinanciamiento.dto';
 import { RefinanciamientoService } from './refinanciamiento.service';
 
 /** Unificación de deuda de una tarjeta de crédito: simular con lo que dice el banco, ejecutar de forma atómica y deshacer. */
@@ -22,6 +22,19 @@ export class RefinanciamientosController {
   @ApiOperation({ summary: 'Simula la unificación (cuota, costo total, comparación con lo que pagas hoy) sin escribir nada' })
   simular(@Body() dto: SimularRefinanciamientoDto, @CurrentUser('userId') userId: bigint) {
     return this.refinanciamientos.simular(userId, dto);
+  }
+
+  @Post('simular-barrido-fecha')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Simula el barrido automático por fecha de corte (detecta compras vigentes y compara capital teórico vs. valor del banco)' })
+  simularBarridoFecha(@Body() dto: SimularBarridoFechaDto, @CurrentUser('userId') userId: bigint) {
+    return this.refinanciamientos.simularBarridoFecha(userId, dto);
+  }
+
+  @Post('ejecutar-barrido-fecha')
+  @ApiOperation({ summary: 'Ejecuta el barrido por fecha de corte en una sola transacción (maestra por el valor del banco $X)' })
+  ejecutarBarridoFecha(@Body() dto: EjecutarBarridoFechaDto, @CurrentUser('userId') userId: bigint) {
+    return this.refinanciamientos.ejecutarBarridoFecha(userId, dto);
   }
 
   @Post()
