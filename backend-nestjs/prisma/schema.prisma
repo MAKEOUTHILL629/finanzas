@@ -141,9 +141,29 @@ model Personas {
   participaciones_eventos  ParticipantesEventoGrupal[]
   tarjetas_titular_externo Tarjetas[]                   @relation("TarjetaTitularExterno")
   aportes_colaborativos    AportesColaborativosCuota[]
+  transacciones_asociadas  Transacciones[]              @relation("TxPersonaAsociada")
+  alias_identificadores    AliasIdentificadoresPersona[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+/// Alias aprendidos de una persona (llaves, cuentas, celulares) para vincular transferencias (sql/018).
+model AliasIdentificadoresPersona {
+  id                  BigInt   @id @default(autoincrement())
+  usuario_id          BigInt
+  persona_id          BigInt
+  /// LLAVE | CUENTA | CELULAR | NOMBRE_BANCO | DOCUMENTO
+  tipo_identificador  String   @db.VarChar(30)
+  valor_identificador String   @db.VarChar(150)
+  entidad_bancaria    String?  @db.VarChar(80)
+  confianza           Decimal? @db.Decimal
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+
+  persona Personas @relation(fields: [persona_id], references: [id], onDelete: Cascade)
+
+  @@unique([usuario_id, tipo_identificador, valor_identificador], map: "uq_alias_identificador_usuario_tipo_valor")
+  @@map("alias_identificadores_persona")
+}
+
 // Dominio 2: Tarjetas de crédito y compras diferidas
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -379,6 +399,13 @@ model Transacciones {
   tags              String[]            @default([])
   comercio_canonico String?             @db.VarChar(120)
   es_transferencia_interna Boolean      @default(false)
+  /// Inteligencia de transferencias (sql/018): el movimiento es una transferencia a un tercero.
+  es_transferencia               Boolean   @default(false)
+  destinatario_nombre_normalizado String?  @db.VarChar(150)
+  llave_o_identificador          String?   @db.VarChar(120)
+  cuenta_bancaria_destino        String?   @db.VarChar(80)
+  entidad_destino                String?   @db.VarChar(80)
+  persona_asociada_id            BigInt?
   cuenta_contraparte_id    BigInt?
   transaccion_espejo_id    BigInt?
 
@@ -395,6 +422,7 @@ model Transacciones {
   cobros_puntuales CobrosPuntuales[]
   reportes_pago    ReportesPagoPersona[]
   cuenta_contraparte CuentasFinancieras? @relation("TxCuentaContraparte", fields: [cuenta_contraparte_id], references: [id], onDelete: SetNull)
+  persona_asociada Personas?             @relation("TxPersonaAsociada", fields: [persona_asociada_id], references: [id], onDelete: SetNull)
   transaccion_espejo Transacciones?      @relation("TxEspejo", fields: [transaccion_espejo_id], references: [id], onDelete: SetNull)
   espejo_inverso     Transacciones[]     @relation("TxEspejo")
   prestamos_desembolso Prestamos[]       @relation("PrestamoTxDesembolso")

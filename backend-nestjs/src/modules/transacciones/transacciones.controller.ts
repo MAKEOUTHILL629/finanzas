@@ -33,6 +33,29 @@ export class TransaccionesController {
     return this.transacciones.crearTransferenciaEntreCuentasPropias(dto, userId);
   }
 
+  @Post('analizar-patrones-transferencias')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Fase 5: extrae llaves, cuentas, nombres y entidad de las transferencias y aprende alias por persona' })
+  analizarPatrones(@CurrentUser('userId') userId: bigint) {
+    return this.transacciones.analizarPatronesTransferencias(userId);
+  }
+
+  @Get('analitica-transferencias')
+  @ApiOperation({ summary: 'Fase 5: ranking por destinatario/llave/cuenta, serie mensual y distribución por entidad (acepta ?q=)' })
+  analiticaTransferencias(@Query('q') q: string | undefined, @CurrentUser('userId') userId: bigint) {
+    return this.transacciones.analiticaTransferencias(userId, q);
+  }
+
+  @Post('vincular-identificador-persona')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Fase 5: vincula manualmente una llave/cuenta/celular a una persona y lo aplica a sus transferencias' })
+  vincularIdentificador(
+    @Body() dto: { personaId: number; tipoIdentificador: string; valorIdentificador: string; entidadBancaria?: string },
+    @CurrentUser('userId') userId: bigint,
+  ) {
+    return this.transacciones.vincularIdentificadorAPersona(userId, dto);
+  }
+
   @Get(':id')
   get(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
     return this.transacciones.get(id, userId);

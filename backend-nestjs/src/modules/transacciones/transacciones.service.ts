@@ -14,6 +14,14 @@ import {
   UpdateTransaccionDto,
 } from './dto/transaccion.dto';
 import { validarReglasTransaccion } from './transaccion.rules';
+import { encontrarPersona } from '../notificaciones-correo/persona-match.util';
+import {
+  MovimientoTransferencia,
+  agruparPorDestinatario,
+  extraerIdentidadTransferencia,
+  normalizarNombreDestinatario,
+  serieMensualTransferencias,
+} from './transferencia-identidad.util';
 
 type Tx = Prisma.TransactionClient;
 
@@ -385,6 +393,183 @@ export class TransaccionesService {
     return this.prisma.transacciones.update({ where: { id: actual.id }, data: { estado: EstadoTransaccion.ANULADO } });
   }
 
+  // ───────────────────────────── inteligencia de transferencias (Iteración 3 · Fase 5) ─────────────────────────────
+
+  /**
+   * Analiza las transacciones del usuario, extrae llave/cuenta/nombre/entidad, resuelve la persona
+   * (por catálogo o por alias aprendidos) y persiste los metadatos (sql/018). Aprende alias nuevos:
+   * si una transferencia trae nombre + cuenta/llave de una persona, esa cuenta/llave queda suya.
+   */
+  async analizarPatronesTransferencias(ownerUserId: bigint) {
+    const [transacciones, personas, alias] = await Promise.all([
+      this.prisma.transacciones.findMany({ where: { owner_user_id: ownerUserId }, orderBy: { id: 'asc' } }),
+      this.prisma.personas.findMany({ where: { owner_user_id: ownerUserId } }),
+      this.prisma.aliasIdentificadoresPersona.findMany({ where: { usuario_id: ownerUserId } }),
+    ]);
+    const aliasPorValor = new Map<string, bigint>();
+    for (const a of alias) aliasPorValor.set(a.valor_identificador.toLowerCase(), a.persona_id);
+
+    let actualizadas = 0;
+    let conPersona = 0;
+    let aliasCreados = 0;
+    for (const t of transacciones) {
+      if (t.estado === EstadoTransaccion.ANULADO) continue;
+      const identidad = extraerIdentidadTransferencia(`${t.concepto} ${t.notas ?? ''} ${t.comercio_canonico ?? ''}`);
+      const esTransferencia = t.tipo_transaccion === TipoTransaccion.TRANSFERENCIA || identidad.esTransferencia;
+      if (!esTransferencia && !t.es_transferencia) continue;
+
+      let personaId: bigint | null = t.persona_asociada_id ?? null;
+      if (!personaId) {
+        const porNombre = encontrarPersona(personas, identidad.nombreDestinatario, identidad.llave ?? identidad.celular);
+        if (porNombre) personaId = porNombre.id;
+      }
+      if (!personaId) {
+        for (const valor of [identidad.llave, identidad.celular, identidad.cuentaDestino]) {
+          const hit = valor ? aliasPorValor.get(valor.toLowerCase()) : undefined;
+          if (hit) { personaId = hit; break; }
+        }
+      }
+      if (personaId) conPersona++;
+
+      const datos = {
+        es_transferencia: esTransferencia,
+        destinatario_nombre_normalizado: identidad.nombreNormalizado ?? t.destinatario_nombre_normalizado,
+        llave_o_identificador: identidad.llave ?? identidad.celular ?? t.llave_o_identificador,
+        cuenta_bancaria_destino: identidad.cuentaDestino ?? t.cuenta_bancaria_destino,
+        entidad_destino: identidad.entidad ?? t.entidad_destino,
+        persona_asociada_id: personaId,
+      };
+      const cambia =
+        datos.es_transferencia !== t.es_transferencia ||
+        datos.destinatario_nombre_normalizado !== t.destinatario_nombre_normalizado ||
+        datos.llave_o_identificador !== t.llave_o_identificador ||
+        datos.cuenta_bancaria_destino !== t.cuenta_bancaria_destino ||
+        datos.entidad_destino !== t.entidad_destino ||
+        String(datos.persona_asociada_id ?? '') !== String(t.persona_asociada_id ?? '');
+      if (cambia) {
+        await this.prisma.transacciones.update({ where: { id: t.id }, data: datos });
+        actualizadas++;
+      }
+
+      // Aprendizaje: nombre + identificador de una persona ⇒ el identificador es suyo.
+      if (personaId && identidad.nombreNormalizado) {
+        for (const [tipo, valor] of [['LLAVE', datos.llave_o_identificador], ['CUENTA', datos.cuenta_bancaria_destino], ['CELULAR', identidad.celular]] as const) {
+          if (!valor) continue;
+          const clave = valor.toLowerCase();
+          if (aliasPorValor.has(clave)) continue;
+          aliasPorValor.set(clave, personaId);
+          await this.prisma.aliasIdentificadoresPersona.upsert({
+            where: { usuario_id_tipo_identificador_valor_identificador: { usuario_id: ownerUserId, tipo_identificador: tipo, valor_identificador: valor } },
+            create: { usuario_id: ownerUserId, persona_id: personaId, tipo_identificador: tipo, valor_identificador: valor, entidad_bancaria: datos.entidad_destino, confianza: toDbRate(toDecimal('0.9')) },
+            update: {},
+          });
+          aliasCreados++;
+        }
+      }
+    }
+    return { analizadas: transacciones.length, actualizadas, conPersona, aliasCreados };
+  }
+
+  /** Analítica agrupada por destinatario, llave y cuenta, con serie mensual y distribución por entidad. */
+  async analiticaTransferencias(ownerUserId: bigint, busqueda?: string) {
+    const [transacciones, personas] = await Promise.all([
+      this.prisma.transacciones.findMany({ where: { owner_user_id: ownerUserId }, orderBy: [{ fecha_transaccion: 'asc' }, { id: 'asc' }] }),
+      this.prisma.personas.findMany({ where: { owner_user_id: ownerUserId } }),
+    ]);
+    const nombrePersona = new Map(personas.map((p) => [String(p.id), p.nombre ?? null]));
+    const movimientos: MovimientoTransferencia[] = [];
+    for (const t of transacciones) {
+      if (t.estado === EstadoTransaccion.ANULADO) continue;
+      const identidad = extraerIdentidadTransferencia(`${t.concepto} ${t.notas ?? ''} ${t.comercio_canonico ?? ''}`);
+      const esTransferencia = t.es_transferencia || t.tipo_transaccion === TipoTransaccion.TRANSFERENCIA || identidad.esTransferencia;
+      if (!esTransferencia) continue;
+      // Si aún no se analizó, la persona se resuelve al vuelo por nombre/llave contra el catálogo.
+      const resuelta = t.persona_asociada_id ? null : encontrarPersona(personas, identidad.nombreDestinatario, identidad.llave ?? identidad.celular);
+      const personaId = t.persona_asociada_id ? Number(t.persona_asociada_id) : resuelta ? Number(resuelta.id) : null;
+      movimientos.push({
+        id: Number(t.id),
+        tipo: t.tipo_transaccion,
+        monto: t.monto_cop,
+        fecha: t.fecha_transaccion.toISOString().slice(0, 10),
+        nombreNormalizado: t.destinatario_nombre_normalizado ?? identidad.nombreNormalizado,
+        llave: t.llave_o_identificador ?? identidad.llave ?? identidad.celular,
+        cuentaDestino: t.cuenta_bancaria_destino ?? identidad.cuentaDestino,
+        entidad: t.entidad_destino ?? identidad.entidad,
+        personaId,
+        personaNombre: personaId !== null ? (nombrePersona.get(String(personaId)) ?? null) : null,
+      });
+    }
+    const q = busqueda ? sinMayusculas(busqueda) : '';
+    const filtrados = q
+      ? movimientos.filter((m) => sinMayusculas(`${m.personaNombre ?? ''} ${m.nombreNormalizado ?? ''} ${m.llave ?? ''} ${m.cuentaDestino ?? ''} ${m.entidad ?? ''}`).includes(q))
+      : movimientos;
+
+    const porDestinatario = agruparPorDestinatario(filtrados);
+    const gruposSimples = (claveDe: (m: MovimientoTransferencia) => string | null) => {
+      const mapa = new Map<string, MovimientoTransferencia[]>();
+      for (const m of filtrados) {
+        const k = claveDe(m);
+        if (!k) continue;
+        mapa.set(k, [...(mapa.get(k) ?? []), m]);
+      }
+      return [...mapa.entries()]
+        .map(([clave, lista]) => ({
+          clave,
+          totalEnviado: money(lista.filter((x) => x.tipo === 'EGRESO' || x.tipo === 'TRANSFERENCIA').reduce((a, x) => a.plus(toDecimal(x.monto)), toDecimal(0))).toNumber(),
+          totalRecibido: money(lista.filter((x) => x.tipo !== 'EGRESO' && x.tipo !== 'TRANSFERENCIA').reduce((a, x) => a.plus(toDecimal(x.monto)), toDecimal(0))).toNumber(),
+          cantidadOperaciones: lista.length,
+          ultimaFecha: lista.map((x) => x.fecha).sort().at(-1) ?? null,
+        }))
+        .sort((a, b) => b.totalEnviado + b.totalRecibido - (a.totalEnviado + a.totalRecibido));
+    };
+
+    return {
+      resumen: {
+        cantidadOperaciones: filtrados.length,
+        totalEnviado: porDestinatario.reduce((a, g) => a + g.totalEnviado, 0),
+        totalRecibido: porDestinatario.reduce((a, g) => a + g.totalRecibido, 0),
+        destinatarios: porDestinatario.length,
+      },
+      porDestinatario,
+      porLlave: gruposSimples((m) => m.llave),
+      porCuenta: gruposSimples((m) => m.cuentaDestino),
+      porEntidad: gruposSimples((m) => m.entidad),
+      serieMensual: serieMensualTransferencias(filtrados),
+    };
+  }
+
+  /** Vincula manualmente una llave/cuenta/celular a una persona y lo aplica a las transacciones que lo traigan. */
+  async vincularIdentificadorAPersona(ownerUserId: bigint, dto: { personaId: number; tipoIdentificador: string; valorIdentificador: string; entidadBancaria?: string }) {
+    const tipos = ['LLAVE', 'CUENTA', 'CELULAR', 'NOMBRE_BANCO', 'DOCUMENTO'];
+    if (!tipos.includes(dto.tipoIdentificador)) throw datosInvalidos({ tipoIdentificador: [`tipoIdentificador debe ser uno de: ${tipos.join(', ')}`] });
+    const valor = (dto.valorIdentificador ?? '').trim();
+    if (!valor) throw datosInvalidos({ valorIdentificador: ['valorIdentificador es obligatorio'] });
+    const persona = await this.prisma.personas.findFirst({ where: { id: BigInt(dto.personaId), owner_user_id: ownerUserId } });
+    if (!persona) throw new NotFoundException(`Persona ${dto.personaId} no encontrada`);
+
+    const alias = await this.prisma.aliasIdentificadoresPersona.upsert({
+      where: { usuario_id_tipo_identificador_valor_identificador: { usuario_id: ownerUserId, tipo_identificador: dto.tipoIdentificador, valor_identificador: valor } },
+      create: { usuario_id: ownerUserId, persona_id: persona.id, tipo_identificador: dto.tipoIdentificador, valor_identificador: valor, entidad_bancaria: dto.entidadBancaria ?? null, confianza: toDbRate(toDecimal(1)) },
+      update: { persona_id: persona.id },
+    });
+
+    const transacciones = await this.prisma.transacciones.findMany({ where: { owner_user_id: ownerUserId } });
+    let actualizadas = 0;
+    const valorNorm = sinMayusculas(valor);
+    for (const t of transacciones) {
+      const identidad = extraerIdentidadTransferencia(`${t.concepto} ${t.notas ?? ''} ${t.comercio_canonico ?? ''}`);
+      const coincide =
+        sinMayusculas(t.llave_o_identificador ?? identidad.llave ?? identidad.celular ?? '') === valorNorm ||
+        sinMayusculas(t.cuenta_bancaria_destino ?? identidad.cuentaDestino ?? '') === valorNorm ||
+        sinMayusculas(t.destinatario_nombre_normalizado ?? identidad.nombreNormalizado ?? '') === valorNorm ||
+        normalizarNombreDestinatario(persona.nombre) === (t.destinatario_nombre_normalizado ?? identidad.nombreNormalizado);
+      if (!coincide) continue;
+      await this.prisma.transacciones.update({ where: { id: t.id }, data: { persona_asociada_id: persona.id, es_transferencia: true } });
+      actualizadas++;
+    }
+    return { aliasId: Number(alias.id), personaId: dto.personaId, transaccionesActualizadas: actualizadas };
+  }
+
   // ───────────────────────────── helpers ─────────────────────────────
 
   private async sincronizarCatalogoEtiquetasTx(tx: Tx, ownerUserId: bigint, slugs: string[]): Promise<void> {
@@ -453,6 +638,11 @@ export class TransaccionesService {
   private finDeDia(valor: string): Date {
     return valor.length === 10 ? new Date(`${valor}T23:59:59.999Z`) : new Date(valor);
   }
+}
+
+/** Texto comparable sin tildes ni mayúsculas (búsqueda de la analítica de transferencias). */
+function sinMayusculas(texto: string): string {
+  return texto.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 }
 
 export interface OpcionesInsercion {

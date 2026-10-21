@@ -48,6 +48,7 @@ export const MODELOS = [
   'reportesPagoPersona',
   'aportesColaborativosCuota',
   'abonosPrestamoPasivo',
+  'aliasIdentificadoresPersona',
 ] as const;
 
 /**
