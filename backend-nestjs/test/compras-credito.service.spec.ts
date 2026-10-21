@@ -608,3 +608,135 @@ describe('ComprasCreditoService — Fase 1 (Iteración 3): Tags, Edición 360° 
     });
   });
 });
+
+describe('ComprasCreditoService — Fase 2 (Iteración 3): Propagación Inteligente a Compras Similares', () => {
+  it('buscarComprasSimilaresParaPropagacion distingue DIDI RIDES de DIDI FOOD y detecta diferencias de cuotas/responsables/tags', async () => {
+    const { prisma, service } = setup();
+    prisma.comprasCredito.findFirst.mockResolvedValue({
+      ...compraBase({
+        id: 5n,
+        concepto: 'DL*DIDI RIDES CO',
+        numero_cuotas: 1,
+        tags: ['#transporte', '#didi-rides'],
+        comercio_canonico: 'DiDi Rides',
+      }),
+      responsables: [
+        { id: 10n, persona: 2n, porcentaje_pago: dec('100'), persona_ref: { nombre: 'Alicia' } },
+      ],
+      tarjeta_ref: { id: 3n, franquicia: 'Mastercard', descripcion: 'Black' },
+    });
+
+    prisma.comprasCredito.findMany.mockResolvedValue([
+      // Candidata válida (mismo comercio DiDi Rides, pero en 12 cuotas y sin responsables)
+      {
+        ...compraBase({
+          id: 12n,
+          concepto: 'DLO*DIDI MOBILITY CO',
+          valor_compra: dec('18500'),
+          numero_cuotas: 12,
+          tags: [],
+          comercio_canonico: null,
+        }),
+        responsables: [],
+        tarjeta_ref: { id: 3n, franquicia: 'Mastercard', descripcion: 'Black' },
+      },
+      // Compra de DiDi Food: NO debe sugerirse cuando editamos DiDi Rides
+      {
+        ...compraBase({
+          id: 15n,
+          concepto: 'DL*DIDI FOOD CO',
+          valor_compra: dec('42000'),
+          numero_cuotas: 12,
+          tags: ['#domicilios'],
+          comercio_canonico: 'DiDi Food',
+        }),
+        responsables: [],
+        tarjeta_ref: { id: 3n, franquicia: 'Mastercard', descripcion: 'Black' },
+      },
+      // Compra de DiDi Rides que YA tiene exactamente los mismos valores: NO debe sugerirse
+      {
+        ...compraBase({
+          id: 19n,
+          concepto: 'DL*DIDI RIDES',
+          valor_compra: dec('21000'),
+          numero_cuotas: 1,
+          tags: ['#transporte', '#didi-rides'],
+          comercio_canonico: 'DiDi Rides',
+        }),
+        responsables: [
+          { id: 11n, persona: 2n, porcentaje_pago: dec('100'), persona_ref: { nombre: 'Alicia' } },
+        ],
+        tarjeta_ref: { id: 3n, franquicia: 'Mastercard', descripcion: 'Black' },
+      },
+    ]);
+
+    const res = await service.buscarComprasSimilaresParaPropagacion(5, OWNER);
+    expect(res.compraOrigen.comercioCanonico).toBe('DiDi Rides');
+    expect(res.candidatas.length).toBe(1);
+    expect(res.candidatas[0].id).toBe(12);
+    expect(res.candidatas[0].diferenciasDetectadas).toEqual(['CUOTAS', 'RESPONSABLES', 'TAGS', 'COMERCIO_CANONICO']);
+  });
+
+  it('propagarEdicionSimilares actualiza cuotas, recalcula amortización y replica responsables porcentuales en las compras seleccionadas', async () => {
+    const { prisma, service } = setup();
+    prisma.comprasCredito.findFirst.mockResolvedValue({
+      ...compraBase({
+        id: 5n,
+        concepto: 'DL*DIDI RIDES',
+        numero_cuotas: 1,
+        tags: ['#transporte', '#didi-rides'],
+        comercio_canonico: 'DiDi Rides',
+      }),
+      responsables: [
+        { id: 10n, persona: 2n, porcentaje_pago: dec('50') },
+        { id: 11n, persona: 4n, porcentaje_pago: dec('50') },
+      ],
+    });
+
+    const destino12 = compraBase({
+      id: 12n,
+      concepto: 'DL*DIDI RIDES',
+      valor_compra: dec('30000'),
+      numero_cuotas: 12,
+      interes: dec('1.8'),
+      tags: ['#viaje'],
+      comercio_canonico: null,
+    });
+
+    prisma.comprasCredito.findMany.mockResolvedValue([destino12]);
+    prisma.comprasCredito.update.mockResolvedValue({
+      ...destino12,
+      numero_cuotas: 1,
+      tags: ['#viaje', '#transporte', '#didi-rides'],
+      comercio_canonico: 'DiDi Rides',
+    });
+    prisma.tarjetas.findUnique.mockResolvedValue({ dia_corte: 15 });
+    prisma.cuotasDetalle.findMany.mockResolvedValue([{ id: 101n, numero_cuota: 1n }, { id: 102n, numero_cuota: 2n }]);
+    prisma.comprasCredito.updateMany.mockResolvedValue({ count: 1 });
+    prisma.responsablesComprasCredito.findMany.mockResolvedValue([{ id: 99n }]);
+
+    const res = await service.propagarEdicionSimilares(
+      {
+        compraOrigenId: 5,
+        compraDestinoIds: [12],
+        aplicarCuotas: true,
+        aplicarResponsables: true,
+        aplicarTags: true,
+        aplicarComercioCanonico: true,
+        modoTags: 'MERGE',
+      },
+      OWNER,
+    );
+
+    expect(res).toEqual({
+      actualizadas: 1,
+      idsActualizados: [12],
+      cuotasRecalculadas: 1,
+      responsablesReplicados: 1,
+    });
+    expect(prisma.responsablesComprasCredito.create).toHaveBeenCalledTimes(2);
+    const primerResp = prisma.responsablesComprasCredito.create.mock.calls[0][0].data;
+    expect(primerResp.cantidad_pago.toString()).toBe('15000'); // 50% de 30.000
+    expect(primerResp.cantidad_cuotas).toBe(1);
+  });
+});

@@ -1,11 +1,11 @@
-import { Body, Controller, Get, Header, Param, ParseIntPipe, Patch } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { legacyTry } from '../../common/utils/legacy-http.util';
 import { ComprasCreditoService } from './compras-credito.service';
-import { ConfirmarTrmDto, PatchCompraCreditoDto } from './dto/compra-credito.dto';
+import { ConfirmarTrmDto, PatchCompraCreditoDto, PropagarEdicionSimilaresDto } from './dto/compra-credito.dto';
 
-/** ERP v2 — compras multimoneda, edición 360° y detalle enriquecido. */
+/** ERP v2 — compras multimoneda, edición 360°, detalle enriquecido y propagación a compras similares. */
 @ApiTags('Compras Crédito v2')
 @ApiBearerAuth()
 @Controller(['api/compras-credito', 'api/v2/compras-credito'])
@@ -19,6 +19,22 @@ export class ComprasCreditoV2Controller {
   })
   async detalleCompleto(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
     return (await this.compras.getDetalleCompleto(id, userId)) ?? 'null';
+  }
+
+  @Post(':id/buscar-similares')
+  @ApiOperation({
+    summary: 'Detecta compras similares del mismo comercio para ofrecer propagación de cuotas, responsables y tags',
+  })
+  buscarSimilares(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
+    return this.compras.buscarComprasSimilaresParaPropagacion(id, userId);
+  }
+
+  @Patch('propagar-edicion-similares')
+  @ApiOperation({
+    summary: 'Propaga selectivamente cuotas, responsables porcentuales, tags y comercio canónico a las compras similares seleccionadas',
+  })
+  propagarSimilares(@Body() dto: PropagarEdicionSimilaresDto, @CurrentUser('userId') userId: bigint) {
+    return this.compras.propagarEdicionSimilares(dto, userId);
   }
 
   @Patch(':id/confirmar-trm')

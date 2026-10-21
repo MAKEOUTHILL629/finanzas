@@ -206,3 +206,45 @@ export class PatchCompraCreditoDto {
   @MaxLength(120)
   comercioCanonico?: string | null;
 }
+
+/**
+ * `PATCH /api/v2/compras-credito/propagar-edicion-similares` — Fase 2 (Iteración 3):
+ * Propaga selectivamente cuotas, responsables porcentuales, tags y comercio canónico desde una compra origen
+ * hacia las compras similares marcadas por el usuario.
+ */
+export class PropagarEdicionSimilaresDto {
+  @ApiProperty({ example: 5 })
+  @IsInt()
+  @IsPositive()
+  compraOrigenId: number;
+
+  @ApiProperty({ type: [Number], example: [12, 18, 24] })
+  @IsArray()
+  @IsInt({ each: true })
+  compraDestinoIds: number[];
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  aplicarCuotas?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  aplicarResponsables?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  aplicarTags?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  aplicarComercioCanonico?: boolean;
+
+  @ApiPropertyOptional({ enum: ['MERGE', 'REEMPLAZAR'], default: 'MERGE' })
+  @IsOptional()
+  @IsString()
+  modoTags?: 'MERGE' | 'REEMPLAZAR';
+}

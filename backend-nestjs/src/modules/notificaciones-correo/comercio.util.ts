@@ -166,3 +166,42 @@ export function nombreLegibleComercio(texto: string | null | undefined): string 
   const base = tokens.length > 0 ? tokens : [texto.trim().toLowerCase()];
   return base.map((t) => t.charAt(0).toUpperCase() + t.slice(1)).join(' ');
 }
+
+/**
+ * Resuelve el comercio canónico de una compra a partir de su `comercio_canonico` explícito o
+ * infiriéndolo de su `concepto` y `descripcion`.
+ */
+export function resolverComercioCanonicoCompra(compra: {
+  concepto?: string | null;
+  descripcion?: string | null;
+  comercio_canonico?: string | null;
+  comercioCanonico?: string | null;
+}): string {
+  const explicito = (compra.comercio_canonico ?? compra.comercioCanonico ?? '').trim();
+  if (explicito) return explicito;
+  const inf = inferirComercioYTags(`${compra.concepto ?? ''} ${compra.descripcion ?? ''}`);
+  if (inf.comercioCanonico) return inf.comercioCanonico;
+  return nombreLegibleComercio(compra.concepto || compra.descripcion || '');
+}
+
+/**
+ * Determina si dos compras pertenecen al mismo comercio para efectos de propagación masiva (Fase 2),
+ * diferenciando estrictamente submarcas como `DiDi Food` vs `DiDi Rides` o `Rappi` vs `Rappi Pro`.
+ */
+export function sonComerciosSimilaresEstrictos(
+  a: { concepto?: string | null; descripcion?: string | null; comercio_canonico?: string | null; comercioCanonico?: string | null },
+  b: { concepto?: string | null; descripcion?: string | null; comercio_canonico?: string | null; comercioCanonico?: string | null },
+): boolean {
+  const canonA = normalizarComercio(resolverComercioCanonicoCompra(a));
+  const canonB = normalizarComercio(resolverComercioCanonicoCompra(b));
+  if (!canonA || !canonB) return false;
+  if (canonA === canonB) return true;
+
+  // Submarcas explícitas de DiDi, Rappi y Uber NO se mezclan entre sí
+  const submarcasEstrictas = new Set(['didi food', 'didi ride', 'rappi pro', 'rappi', 'uber eat', 'uber']);
+  if (submarcasEstrictas.has(canonA) || submarcasEstrictas.has(canonB)) {
+    return canonA === canonB;
+  }
+
+  return similitudComercio(canonA, canonB) >= 0.75;
+}

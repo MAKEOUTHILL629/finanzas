@@ -13,9 +13,15 @@ import { dateToMillis, idNum, num, numOrNull, timestampToDayMillis } from '../..
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { colorSugeridoTag, nombreLegibleTag } from '../lookup/lookup.service';
-import { inferirComercioYTags, normalizarComercio, normalizarTags } from '../notificaciones-correo/comercio.util';
+import {
+  inferirComercioYTags,
+  normalizarComercio,
+  normalizarTags,
+  resolverComercioCanonicoCompra,
+  sonComerciosSimilaresEstrictos,
+} from '../notificaciones-correo/comercio.util';
 import { resolverPlasticoCompra } from '../tarjetas/plasticos.db';
-import { CompraCreditoInput } from './dto/compra-credito.dto';
+import { CompraCreditoInput, PropagarEdicionSimilaresDto } from './dto/compra-credito.dto';
 
 type Tx = Prisma.TransactionClient;
 
@@ -985,6 +991,242 @@ export class ComprasCreditoService {
     const actualizada = await this.getById(compraId, ownerUserId);
     if (!actualizada) throw new Error(`No se encontró la compra con ID ${compraId}`);
     return actualizada;
+  }
+
+  // ───────────────────────────── Fase 2 (Iteración 3): Propagación a Compras Similares ─────────────────────────────
+
+  /**
+   * `POST /api/v2/compras-credito/:id/buscar-similares` — Detecta compras activas del mismo comercio
+   * (diferenciando estrictamente DiDi Food de DiDi Rides, Rappi de Rappi Pro, etc.) que tengan al menos
+   * un atributo distinto (`numeroCuotas`, `responsables`, `tags`, `comercioCanonico`) respecto a la compra origen.
+   */
+  async buscarComprasSimilaresParaPropagacion(compraId: number, ownerUserId: bigint) {
+    const origen = await this.prisma.comprasCredito.findFirst({
+      where: { id: BigInt(compraId), owner_user_id: ownerUserId },
+      include: {
+        responsables: {
+          include: { persona_ref: true },
+          orderBy: { id: 'asc' },
+        },
+        tarjeta_ref: true,
+      },
+    });
+    if (!origen) {
+      throw new HttpException({ message: `Compra ${compraId} no encontrada` }, HttpStatus.NOT_FOUND);
+    }
+
+    const comercioOrigen = resolverComercioCanonicoCompra(origen);
+    const cuotasOrigen = origen.numero_cuotas ?? 1;
+    const tagsOrigen = normalizarTags(origen.tags ?? []);
+    const firmaRespOrigen = (origen.responsables ?? [])
+      .filter((r) => r.persona !== null)
+      .map((r) => `${r.persona}:${num(r.porcentaje_pago)}`)
+      .sort()
+      .join('|');
+
+    const otrasCompras = await this.prisma.comprasCredito.findMany({
+      where: {
+        owner_user_id: ownerUserId,
+        id: { not: origen.id },
+        refinanciamiento_id: null,
+        es_refinanciamiento: false,
+      },
+      include: {
+        responsables: {
+          include: { persona_ref: true },
+          orderBy: { id: 'asc' },
+        },
+        tarjeta_ref: true,
+      },
+      orderBy: [{ fecha_compra: 'desc' }, { id: 'desc' }],
+    });
+
+    const candidatas = [];
+    for (const c of otrasCompras) {
+      if (!sonComerciosSimilaresEstrictos(origen, c)) continue;
+
+      const cuotasActual = c.numero_cuotas ?? 1;
+      const tagsActuales = normalizarTags(c.tags ?? []);
+      const firmaRespActual = (c.responsables ?? [])
+        .filter((r) => r.persona !== null)
+        .map((r) => `${r.persona}:${num(r.porcentaje_pago)}`)
+        .sort()
+        .join('|');
+      const comercioActual = c.comercio_canonico ?? null;
+
+      const diferenciasDetectadas: string[] = [];
+      if (cuotasActual !== cuotasOrigen) diferenciasDetectadas.push('CUOTAS');
+      if (firmaRespActual !== firmaRespOrigen) diferenciasDetectadas.push('RESPONSABLES');
+      if (tagsActuales.join(',') !== tagsOrigen.join(',')) diferenciasDetectadas.push('TAGS');
+      if ((comercioActual ?? '') !== (origen.comercio_canonico ?? comercioOrigen)) {
+        diferenciasDetectadas.push('COMERCIO_CANONICO');
+      }
+
+      if (diferenciasDetectadas.length === 0) continue;
+
+      const tRef = c.tarjeta_ref;
+      const tarjetaNombre = tRef
+        ? [tRef.franquicia, tRef.descripcion].filter(Boolean).join(' · ') || `Tarjeta #${tRef.id}`
+        : c.tarjeta
+          ? `Tarjeta #${c.tarjeta}`
+          : 'Sin tarjeta';
+
+      candidatas.push({
+        id: idNum(c.id),
+        concepto: c.concepto ?? '',
+        descripcion: c.descripcion ?? '',
+        fechaCompra: c.fecha_compra ? c.fecha_compra.toISOString().slice(0, 10) : null,
+        valorTotal: num(c.valor_compra),
+        numeroCuotasActual: cuotasActual,
+        responsablesActuales: (c.responsables ?? []).map((r) => ({
+          personaId: r.persona === null ? null : idNum(r.persona),
+          nombre: r.persona_ref?.nombre?.trim() || (r.persona ? `Persona #${r.persona}` : 'Sin asignar'),
+          porcentajePago: num(r.porcentaje_pago),
+        })),
+        tagsActuales,
+        comercioCanonicoActual: comercioActual,
+        tarjetaNombre,
+        diferenciasDetectadas,
+      });
+    }
+
+    return {
+      compraOrigen: {
+        id: idNum(origen.id),
+        concepto: origen.concepto ?? '',
+        comercioCanonico: origen.comercio_canonico ?? comercioOrigen,
+        numeroCuotas: cuotasOrigen,
+        tags: tagsOrigen,
+        responsables: (origen.responsables ?? []).map((r) => ({
+          personaId: r.persona === null ? null : idNum(r.persona),
+          nombre: r.persona_ref?.nombre?.trim() || (r.persona ? `Persona #${r.persona}` : 'Sin asignar'),
+          porcentajePago: num(r.porcentaje_pago),
+        })),
+      },
+      candidatas,
+    };
+  }
+
+  /**
+   * `PATCH /api/v2/compras-credito/propagar-edicion-similares` — Propaga selectivamente cuotas,
+   * responsables porcentuales, tags y comercio canónico desde `compraOrigenId` hacia `compraDestinoIds`.
+   */
+  async propagarEdicionSimilares(dto: PropagarEdicionSimilaresDto, ownerUserId: bigint) {
+    const destinoIdsUnicos = [...new Set((dto.compraDestinoIds ?? []).filter((id) => Number.isInteger(id) && id > 0 && id !== dto.compraOrigenId))];
+    if (destinoIdsUnicos.length === 0) {
+      return {
+        actualizadas: 0,
+        idsActualizados: [] as number[],
+        cuotasRecalculadas: 0,
+        responsablesReplicados: 0,
+      };
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const origen = await tx.comprasCredito.findFirst({
+        where: { id: BigInt(dto.compraOrigenId), owner_user_id: ownerUserId },
+        include: {
+          responsables: { orderBy: { id: 'asc' } },
+        },
+      });
+      if (!origen) {
+        throw new HttpException({ message: `Compra origen ${dto.compraOrigenId} no encontrada` }, HttpStatus.NOT_FOUND);
+      }
+
+      const aplicarCuotas = dto.aplicarCuotas ?? false;
+      const aplicarResponsables = dto.aplicarResponsables ?? false;
+      const aplicarTags = dto.aplicarTags ?? false;
+      const aplicarComercioCanonico = dto.aplicarComercioCanonico ?? false;
+      const modoTags = dto.modoTags ?? 'MERGE';
+
+      const tagsOrigen = normalizarTags(origen.tags ?? []);
+      if (aplicarTags && tagsOrigen.length > 0) {
+        await this.sincronizarCatalogoEtiquetasTx(tx, ownerUserId, tagsOrigen);
+      }
+      const comercioCanonicoOrigen = origen.comercio_canonico?.trim() || resolverComercioCanonicoCompra(origen) || null;
+
+      const destinos = await tx.comprasCredito.findMany({
+        where: {
+          owner_user_id: ownerUserId,
+          id: { in: destinoIdsUnicos.map((id) => BigInt(id)) },
+          refinanciamiento_id: null,
+          es_refinanciamiento: false,
+        },
+      });
+
+      const idsActualizados: number[] = [];
+      let cuotasRecalculadas = 0;
+      let responsablesReplicados = 0;
+
+      for (const destino of destinos) {
+        const updateData: Prisma.ComprasCreditoUncheckedUpdateInput = {};
+        const nuevoNumeroCuotas = aplicarCuotas && origen.numero_cuotas ? origen.numero_cuotas : (destino.numero_cuotas ?? 1);
+        const cambioCuotas = aplicarCuotas && origen.numero_cuotas !== null && destino.numero_cuotas !== origen.numero_cuotas;
+
+        if (cambioCuotas) {
+          updateData.numero_cuotas = nuevoNumeroCuotas;
+        }
+        if (aplicarTags) {
+          const actuales = normalizarTags(destino.tags ?? []);
+          updateData.tags = modoTags === 'REEMPLAZAR' ? tagsOrigen : normalizarTags([...actuales, ...tagsOrigen]);
+        }
+        if (aplicarComercioCanonico && comercioCanonicoOrigen) {
+          updateData.comercio_canonico = comercioCanonicoOrigen;
+        }
+
+        let destinoActualizado = destino;
+        if (Object.keys(updateData).length > 0) {
+          destinoActualizado = await tx.comprasCredito.update({
+            where: { id: destino.id },
+            data: updateData,
+          });
+        }
+
+        if (cambioCuotas) {
+          await this.recalcularTx(tx, destinoActualizado);
+          cuotasRecalculadas++;
+        }
+
+        if (aplicarResponsables) {
+          const respExistentes = await tx.responsablesComprasCredito.findMany({
+            where: { compra_credito: destino.id },
+            select: { id: true },
+          });
+          if (respExistentes.length > 0) {
+            await tx.movimientosDeudaPersona.deleteMany({
+              where: { responsable_compra_id: { in: respExistentes.map((r) => r.id) } },
+            });
+            await tx.responsablesComprasCredito.deleteMany({ where: { compra_credito: destino.id } });
+          }
+
+          const valorDestino = toDecimal(destinoActualizado.valor_compra);
+          for (const rOrig of origen.responsables ?? []) {
+            if (rOrig.persona === null) continue;
+            const pct = toDecimal(rOrig.porcentaje_pago);
+            const cantidadPago = money(valorDestino.mul(pct).div(100));
+            await tx.responsablesComprasCredito.create({
+              data: {
+                persona: rOrig.persona,
+                compra_credito: destino.id,
+                porcentaje_pago: toDb(pct),
+                cantidad_pago: toDbMoney(cantidadPago),
+                cantidad_cuotas: nuevoNumeroCuotas,
+              },
+            });
+          }
+          responsablesReplicados++;
+        }
+
+        idsActualizados.push(idNum(destino.id));
+      }
+
+      return {
+        actualizadas: idsActualizados.length,
+        idsActualizados,
+        cuotasRecalculadas,
+        responsablesReplicados,
+      };
+    }, TX_OPTIONS);
   }
 
   // ───────────────────────────── helpers ─────────────────────────────
