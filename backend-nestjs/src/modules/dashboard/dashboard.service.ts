@@ -125,6 +125,7 @@ export class DashboardService {
         desembolsoBruto: money(toDecimal(flujo.desembolso_bruto_mes)),
         gastosPropios: money(toDecimal(flujo.gasto_neto_real_tuyo)),
         flujoLibre: money(toDecimal(flujo.flujo_caja_libre_estimado)),
+        transferenciasInternas: money(toDecimal(flujo.total_transferencias_internas)),
       },
       tarjetas: {
         items: tarjetasResumen,

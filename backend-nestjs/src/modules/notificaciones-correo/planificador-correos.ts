@@ -283,6 +283,8 @@ function datosTransaccion(
     tarjetaPagadaId: bigint | null;
     concepto: string;
     contraparte: string | null;
+    esTransferenciaInterna?: boolean;
+    cuentaContraparteId?: number | null;
   },
 ): DatosTransaccion {
   return {
@@ -299,6 +301,8 @@ function datosTransaccion(
     origenRegistro: OrigenRegistro.EMAIL_AUTO,
     estado: EstadoTransaccion.CONFIRMADO,
     notas: `Sincronizado desde Bancolombia (${item.externalMessageId})${p.contraparte ? ` · Contraparte: ${p.contraparte}` : ''}`,
+    ...(p.esTransferenciaInterna ? { esTransferenciaInterna: true } : {}),
+    ...(p.cuentaContraparteId ? { cuentaContraparteId: p.cuentaContraparteId } : {}),
   };
 }
 
@@ -599,6 +603,25 @@ function planMovimientoConCuenta(
   if (anteriorAlCorte(b.fecha)) return pendiente(MOTIVO_HISTORICO);
   const persona = a.personaId === null ? null : snap.personas.find((p) => p.id === a.personaId);
   const contraparte = a.cuerpo.recibida?.contraparte ?? null;
+
+  // Iteración 2 — Fase 4: detectar si es una transferencia entre cuentas propias del mismo usuario
+  const digitosDestino = !esIngreso ? extraerUltimos4(item.comercio) : null;
+  const cuentaPorDigitosPropia = digitosDestino
+    ? snap.cuentas.find((c) => c.id !== cuenta.id && c.ultimos_4_digitos === digitosDestino)
+    : undefined;
+  const parEnVentana = snap.notificaciones.find(
+    (n) =>
+      n.cuentaId !== null &&
+      n.cuentaId !== undefined &&
+      n.cuentaId !== cuenta.id &&
+      n.ruta === (esIngreso ? 'EGRESO' : 'INGRESO') &&
+      n.monto !== null &&
+      n.monto.equals(b.monto) &&
+      Math.abs(n.fecha.getTime() - b.fecha.getTime()) <= VENTANA_DUPLICADO_MS,
+  );
+  const cuentaContrapartePropiaId = cuentaPorDigitosPropia?.id ?? parEnVentana?.cuentaId ?? null;
+  const esTransferenciaPropia = cuentaContrapartePropiaId !== null;
+
   const concepto =
     a.cuerpo.recibida && contraparte
       ? `Transferencia recibida de ${contraparte}`
@@ -620,6 +643,8 @@ function planMovimientoConCuenta(
         tarjetaPagadaId: null,
         concepto,
         contraparte: persona?.nombre ?? null,
+        esTransferenciaInterna: esTransferenciaPropia,
+        cuentaContraparteId: cuentaContrapartePropiaId !== null ? Number(cuentaContrapartePropiaId) : null,
       }),
       montoCop,
       permitirPagoTarjetaSinTarjeta: false,

@@ -1,7 +1,12 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiExcludeEndpoint, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { CreateTransaccionDto, TransaccionesFiltroDto, UpdateTransaccionDto } from './dto/transaccion.dto';
+import {
+  CrearTransferenciaInternaDto,
+  CreateTransaccionDto,
+  TransaccionesFiltroDto,
+  UpdateTransaccionDto,
+} from './dto/transaccion.dto';
 import { TransaccionesService } from './transacciones.service';
 
 @ApiTags('Transacciones')
@@ -14,6 +19,18 @@ export class TransaccionesController {
   @ApiOperation({ summary: 'Libro diario filtrado por fechas, cuenta, categoría, tipo y estado (paginado)' })
   list(@Query() filtro: TransaccionesFiltroDto, @CurrentUser('userId') userId: bigint) {
     return this.transacciones.list(userId, filtro);
+  }
+
+  @Post('transferencia-propia')
+  @HttpCode(201)
+  @ApiOperation({
+    summary: 'Iteración 2 — Fase 4: Registra una transferencia entre cuentas propias con movimientos espejo vinculados',
+    description:
+      'Crea un movimiento EGRESO en cuentaOrigenId y su movimiento espejo INGRESO en cuentaDestinoId (ambos con es_transferencia_interna = true), ' +
+      'ajustando atómicamente los saldos de ambas cuentas sin inflar los totales de ingresos o gastos del mes.',
+  })
+  crearTransferenciaPropia(@Body() dto: CrearTransferenciaInternaDto, @CurrentUser('userId') userId: bigint) {
+    return this.transacciones.crearTransferenciaEntreCuentasPropias(dto, userId);
   }
 
   @Get(':id')

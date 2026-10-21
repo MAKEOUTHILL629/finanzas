@@ -329,6 +329,8 @@ model CuentasFinancieras {
   notificaciones        NotificacionesCorreo[]
   reportes_pago         ReportesPagoPersona[]
   metodos_pago          MetodosPagoUsuario[]
+  transacciones_contraparte Transacciones[]        @relation("TxCuentaContraparte")
+  prestamos_desembolso      Prestamos[]            @relation("PrestamoCuentaDesembolso")
   abonos_prestamos_pasivos AbonosPrestamoPasivo[]
 }
 
@@ -368,6 +370,9 @@ model Transacciones {
   /// Tags transversales (sql/011, Fase 2).
   tags              String[]            @default([])
   comercio_canonico String?             @db.VarChar(120)
+  es_transferencia_interna Boolean      @default(false)
+  cuenta_contraparte_id    BigInt?
+  transaccion_espejo_id    BigInt?
 
   owner          Users               @relation(fields: [owner_user_id], references: [id])
   cuenta_origen  CuentasFinancieras? @relation("TxCuentaOrigen", fields: [cuenta_origen_id], references: [id])
@@ -381,6 +386,10 @@ model Transacciones {
   aportes_detalle  AportesDetalle[]
   cobros_puntuales CobrosPuntuales[]
   reportes_pago    ReportesPagoPersona[]
+  cuenta_contraparte CuentasFinancieras? @relation("TxCuentaContraparte", fields: [cuenta_contraparte_id], references: [id], onDelete: SetNull)
+  transaccion_espejo Transacciones?      @relation("TxEspejo", fields: [transaccion_espejo_id], references: [id], onDelete: SetNull)
+  espejo_inverso     Transacciones[]     @relation("TxEspejo")
+  prestamos_desembolso Prestamos[]       @relation("PrestamoTxDesembolso")
   aportes_colaborativos AportesColaborativosCuota[]
   abonos_prestamos_pasivos AbonosPrestamoPasivo[]
 }
@@ -418,6 +427,7 @@ model NotificacionesCorreo {
   persona              Personas?              @relation(fields: [persona_id], references: [id])
   original             NotificacionesCorreo?  @relation("NotificacionDuplicada", fields: [notificacion_original_id], references: [id])
   duplicadas           NotificacionesCorreo[] @relation("NotificacionDuplicada")
+  prestamos_asociados  Prestamos[]            @relation("PrestamoNotificacionCorreo")
   cobros_puntuales     CobrosPuntuales[]
 }
 
@@ -530,12 +540,18 @@ model Prestamos {
   fecha_compromiso_pago  DateTime? @db.Date
   cuenta_destino_tercero String?   @db.VarChar(150)
   token_consulta_publica String?   @unique @db.VarChar(64)
+  transaccion_desembolso_id    BigInt?
+  notificacion_correo_id       BigInt?
+  cuenta_origen_desembolso_id  BigInt?
 
   owner               Users?          @relation(fields: [owner_user_id], references: [id])
   responsable_ref     Personas?       @relation("PrestamoResponsable", fields: [responsable], references: [id])
   creado_por          Personas?       @relation("PrestamoCreadoPor", fields: [creado_por_persona_id], references: [id])
   corte               CortesCobro?    @relation(fields: [corte_id], references: [id])
   origen_cruce_aporte AportesDetalle? @relation("PrestamoOrigenAporte", fields: [origen_cruce_aporte_id], references: [id])
+  transaccion_desembolso   Transacciones?        @relation("PrestamoTxDesembolso", fields: [transaccion_desembolso_id], references: [id], onDelete: SetNull)
+  notificacion_correo      NotificacionesCorreo? @relation("PrestamoNotificacionCorreo", fields: [notificacion_correo_id], references: [id], onDelete: SetNull)
+  cuenta_origen_desembolso CuentasFinancieras?   @relation("PrestamoCuentaDesembolso", fields: [cuenta_origen_desembolso_id], references: [id], onDelete: SetNull)
 
   aprobaciones        AprobacionesPrestamos[]
   abonos_pasivos      AbonosPrestamoPasivo[]

@@ -129,11 +129,15 @@ export class NotificacionesCorreoService {
     const ultimos4 =
       interpretado.ultimos4 ??
       notificacion.ultimos_4 ??
-      extraerUltimos4([notificacion.cuerpo_extraido ?? '', notificacion.asunto ?? '']);
+      cuerpo.ultimos4 ??
+      extraerUltimos4(`${notificacion.cuerpo_extraido ?? ''} ${notificacion.asunto ?? ''}`);
+
+    const contraparteNombre = cuerpo.enviada?.contraparte ?? cuerpo.recibida?.contraparte ?? null;
+    const contraparteLlave = cuerpo.enviada?.llave ?? cuerpo.recibida?.llave ?? null;
 
     const comercioCrudo =
       interpretado.comercio ??
-      cuerpo.contraparte?.nombre ??
+      contraparteNombre ??
       notificacion.comercio_normalizado ??
       notificacion.asunto ??
       null;
@@ -214,10 +218,11 @@ export class NotificacionesCorreoService {
           : null;
 
     const cuentaPrincipal = cuentas.find((c) => c.es_principal === true) ?? cuentas[0] ?? null;
-    const personaContraparte = encontrarPersona(personas, {
-      nombre: cuerpo.contraparte?.nombre ?? interpretado.comercio ?? null,
-      celular: cuerpo.contraparte?.celular ?? null,
-    });
+    const personaContraparte = encontrarPersona(
+      personas,
+      contraparteNombre ?? interpretado.comercio ?? null,
+      contraparteLlave,
+    );
 
     return inferirPrefillPorHistorial({
       notificacionId: id,

@@ -5,12 +5,17 @@ import { money, rate, toDbMoney, toDbRate, toDecimal } from '../../common/utils/
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { assertCategoria, assertCuenta, assertTarjeta } from '../../common/utils/ownership.util';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateTransaccionDto, TransaccionesFiltroDto, UpdateTransaccionDto } from './dto/transaccion.dto';
+import {
+  CrearTransferenciaInternaDto,
+  CreateTransaccionDto,
+  TransaccionesFiltroDto,
+  UpdateTransaccionDto,
+} from './dto/transaccion.dto';
 import { validarReglasTransaccion } from './transaccion.rules';
 
 type Tx = Prisma.TransactionClient;
 
-interface DatosTransaccion {
+export interface DatosTransaccion {
   tipoTransaccion: TipoTransaccion;
   cuentaOrigenId: number | null;
   cuentaDestinoId: number | null;
@@ -25,6 +30,15 @@ interface DatosTransaccion {
   origenRegistro: OrigenRegistro;
   estado: EstadoTransaccion;
   notas: string | null;
+  esTransferenciaInterna?: boolean;
+  cuentaContraparteId?: number | null;
+  transaccionEspejoId?: number | null;
+}
+
+export interface ResultadoTransferenciaPropia {
+  salida: Transacciones;
+  entrada: Transacciones;
+  comision: Transacciones | null;
 }
 
 /**
@@ -45,6 +59,7 @@ export class TransaccionesService {
       ...(tipo ? { tipo_transaccion: tipo } : {}),
       ...(filtro.estado ? { estado: filtro.estado } : {}),
       ...(filtro.origen_registro ? { origen_registro: filtro.origen_registro } : {}),
+      ...(filtro.esTransferenciaInterna !== undefined ? { es_transferencia_interna: filtro.esTransferenciaInterna } : {}),
       ...(categoriaId ? { categoria_id: BigInt(categoriaId) } : {}),
       ...(cuentaId ? { OR: [{ cuenta_origen_id: BigInt(cuentaId) }, { cuenta_destino_id: BigInt(cuentaId) }] } : {}),
       ...(rango.desde || rango.hasta
@@ -95,8 +110,118 @@ export class TransaccionesService {
         dto.estado ??
         (origenRegistro === OrigenRegistro.EMAIL_AUTO ? EstadoTransaccion.PENDIENTE_REVISION : EstadoTransaccion.CONFIRMADO),
       notas: dto.notas ?? null,
+      esTransferenciaInterna: dto.esTransferenciaInterna ?? dto.tipoTransaccion === TipoTransaccion.TRANSFERENCIA,
+      cuentaContraparteId: dto.cuentaContraparteId ?? null,
     };
     return this.prisma.$transaction((tx) => this.insertar(tx, datos, ownerUserId));
+  }
+
+  /**
+   * Iteración 2 — Fase 4: Crea un par de transacciones enlazadas (`salida` en cuentaOrigenId y `entrada` en cuentaDestinoId)
+   * marcadas con `es_transferencia_interna = true` y vinculadas por `transaccion_espejo_id`.
+   * Ambas cuentas ven actualizado su saldo atómicamente vía Trigger 2 y el movimiento es 100% neutro en Ingresos/Gastos del mes.
+   */
+  async crearTransferenciaEntreCuentasPropias(
+    dto: CrearTransferenciaInternaDto,
+    ownerUserId: bigint,
+  ): Promise<ResultadoTransferenciaPropia> {
+    if (dto.cuentaOrigenId === dto.cuentaDestinoId) {
+      throw datosInvalidos({
+        cuentaDestinoId: ['La cuenta de origen y la cuenta de destino deben ser distintas en una transferencia entre cuentas propias'],
+      });
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await assertCuenta(tx, dto.cuentaOrigenId, ownerUserId);
+      await assertCuenta(tx, dto.cuentaDestinoId, ownerUserId);
+
+      const [origen, destino] = await Promise.all([
+        tx.cuentasFinancieras.findUnique({ where: { id: BigInt(dto.cuentaOrigenId) }, select: { nombre: true } }),
+        tx.cuentasFinancieras.findUnique({ where: { id: BigInt(dto.cuentaDestinoId) }, select: { nombre: true } }),
+      ]);
+
+      const fecha = dto.fechaTransaccion ? new Date(dto.fechaTransaccion) : new Date();
+      const moneda = (dto.monedaOriginal ?? 'COP').toUpperCase();
+      const conceptoBase =
+        dto.concepto?.trim() ||
+        `Transferencia entre mis cuentas: ${origen?.nombre ?? `#${dto.cuentaOrigenId}`} → ${destino?.nombre ?? `#${dto.cuentaDestinoId}`}`;
+
+      const salidaInicial = await this.insertar(
+        tx,
+        {
+          tipoTransaccion: TipoTransaccion.EGRESO,
+          cuentaOrigenId: dto.cuentaOrigenId,
+          cuentaDestinoId: null,
+          tarjetaPagadaId: null,
+          categoriaId: null,
+          fechaTransaccion: fecha,
+          concepto: conceptoBase.slice(0, 255),
+          monedaOriginal: moneda,
+          montoOriginal: dto.monto,
+          tasaCambio: dto.tasaCambio,
+          origenRegistro: OrigenRegistro.MANUAL,
+          estado: EstadoTransaccion.CONFIRMADO,
+          notas: dto.notas ?? null,
+          esTransferenciaInterna: true,
+          cuentaContraparteId: dto.cuentaDestinoId,
+        },
+        ownerUserId,
+      );
+
+      const entrada = await this.insertar(
+        tx,
+        {
+          tipoTransaccion: TipoTransaccion.INGRESO,
+          cuentaOrigenId: null,
+          cuentaDestinoId: dto.cuentaDestinoId,
+          tarjetaPagadaId: null,
+          categoriaId: null,
+          fechaTransaccion: fecha,
+          concepto: conceptoBase.slice(0, 255),
+          monedaOriginal: moneda,
+          montoOriginal: dto.monto,
+          tasaCambio: dto.tasaCambio,
+          origenRegistro: OrigenRegistro.MANUAL,
+          estado: EstadoTransaccion.CONFIRMADO,
+          notas: dto.notas ?? null,
+          esTransferenciaInterna: true,
+          cuentaContraparteId: dto.cuentaOrigenId,
+          transaccionEspejoId: Number(salidaInicial.id),
+        },
+        ownerUserId,
+      );
+
+      const salida = await tx.transacciones.update({
+        where: { id: salidaInicial.id },
+        data: { transaccion_espejo_id: entrada.id },
+      });
+
+      let comision: Transacciones | null = null;
+      if (dto.comisionGMF !== undefined && dto.comisionGMF !== null && toDecimal(dto.comisionGMF).greaterThan(0)) {
+        comision = await this.insertar(
+          tx,
+          {
+            tipoTransaccion: TipoTransaccion.EGRESO,
+            cuentaOrigenId: dto.cuentaOrigenId,
+            cuentaDestinoId: null,
+            tarjetaPagadaId: null,
+            categoriaId: dto.categoriaComisionId ?? null,
+            fechaTransaccion: fecha,
+            concepto: `GMF 4x1000 / Comisión · ${conceptoBase}`.slice(0, 255),
+            monedaOriginal: moneda,
+            montoOriginal: dto.comisionGMF,
+            tasaCambio: dto.tasaCambio,
+            origenRegistro: OrigenRegistro.MANUAL,
+            estado: EstadoTransaccion.CONFIRMADO,
+            notas: `Comisión bancaria asociada a transferencia interna #${salida.id}`,
+            esTransferenciaInterna: false,
+          },
+          ownerUserId,
+        );
+      }
+
+      return { salida, entrada, comision };
+    });
   }
 
   /** Inserción reutilizable (ingesta de correos, pagos recurrentes) dentro de una transacción existente. */
@@ -125,6 +250,15 @@ export class TransaccionesService {
         origen_registro: datos.origenRegistro,
         estado: datos.estado,
         notas: datos.notas,
+        es_transferencia_interna: datos.esTransferenciaInterna ?? datos.tipoTransaccion === TipoTransaccion.TRANSFERENCIA,
+        cuenta_contraparte_id:
+          datos.cuentaContraparteId === undefined || datos.cuentaContraparteId === null
+            ? null
+            : BigInt(datos.cuentaContraparteId),
+        transaccion_espejo_id:
+          datos.transaccionEspejoId === undefined || datos.transaccionEspejoId === null
+            ? null
+            : BigInt(datos.transaccionEspejoId),
       },
     });
   }
@@ -157,7 +291,7 @@ export class TransaccionesService {
       await this.validarYResolverReferencias(tx, fusion, ownerUserId);
       const { montoOriginal, tasa, montoCop } = this.resolverMontos(fusion);
 
-      return tx.transacciones.update({
+      const actualizada = await tx.transacciones.update({
         where: { id: actual.id },
         data: {
           tipo_transaccion: fusion.tipoTransaccion,
@@ -174,12 +308,48 @@ export class TransaccionesService {
           notas: fusion.notas,
         },
       });
+
+      // Mantener simetría contable con su transacción espejo si es transferencia entre cuentas propias
+      if (actual.transaccion_espejo_id !== null && actual.transaccion_espejo_id !== undefined) {
+        const espejo = await tx.transacciones.findFirst({
+          where: { id: actual.transaccion_espejo_id, owner_user_id: ownerUserId },
+        });
+        if (espejo) {
+          await tx.transacciones.update({
+            where: { id: espejo.id },
+            data: {
+              fecha_transaccion: fusion.fechaTransaccion,
+              concepto: fusion.concepto,
+              monto_original: toDbMoney(montoOriginal),
+              tasa_cambio: toDbRate(tasa),
+              monto_cop: toDbMoney(montoCop),
+              estado: fusion.estado,
+              notas: fusion.notas,
+            },
+          });
+        }
+      }
+
+      return actualizada;
     });
   }
 
   /** "Eliminar" = anular: el Trigger 2 revierte el saldo y se conserva la auditoría (FKs desde el sub-ledger). */
   async anular(id: number, ownerUserId: bigint): Promise<Transacciones> {
     const actual = await this.get(id, ownerUserId);
+    if (actual.transaccion_espejo_id !== null && actual.transaccion_espejo_id !== undefined) {
+      return this.prisma.$transaction(async (tx) => {
+        const anulada = await tx.transacciones.update({
+          where: { id: actual.id },
+          data: { estado: EstadoTransaccion.ANULADO },
+        });
+        await tx.transacciones.updateMany({
+          where: { id: actual.transaccion_espejo_id!, owner_user_id: ownerUserId },
+          data: { estado: EstadoTransaccion.ANULADO },
+        });
+        return anulada;
+      });
+    }
     return this.prisma.transacciones.update({ where: { id: actual.id }, data: { estado: EstadoTransaccion.ANULADO } });
   }
 
@@ -240,5 +410,3 @@ export interface OpcionesInsercion {
   /** Solo para la ingesta automática de correos: permite PAGO_TARJETA sin `tarjeta_pagada_id`. */
   permitirPagoTarjetaSinTarjeta?: boolean;
 }
-
-export type { DatosTransaccion };

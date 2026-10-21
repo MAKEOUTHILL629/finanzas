@@ -30,6 +30,7 @@ export interface FlujoCajaRow {
   desembolso_bruto_mes: Prisma.Decimal;
   gasto_neto_real_tuyo: Prisma.Decimal;
   flujo_caja_libre_estimado: Prisma.Decimal;
+  total_transferencias_internas?: Prisma.Decimal;
 }
 
 /**
@@ -188,6 +189,7 @@ export class SubledgerDeudasService {
         FROM "Transacciones"
         WHERE owner_user_id = ${ownerUserId}::int8
           AND tipo_transaccion = 'INGRESO'
+          AND COALESCE(es_transferencia_interna, false) = false
           AND estado = 'CONFIRMADO'
           AND to_char(fecha_transaccion, 'YYYY-MM') = ${periodo}::text
       ),
@@ -196,6 +198,7 @@ export class SubledgerDeudasService {
         FROM "Transacciones"
         WHERE owner_user_id = ${ownerUserId}::int8
           AND tipo_transaccion = 'EGRESO'
+          AND COALESCE(es_transferencia_interna, false) = false
           AND estado = 'CONFIRMADO'
           AND to_char(fecha_transaccion, 'YYYY-MM') = ${periodo}::text
       ),
@@ -232,7 +235,8 @@ export class SubledgerDeudasService {
         reem.total_por_cobrar_terceros::numeric(15,2) AS total_por_cobrar_terceros,
         (t.total_tarjetas + r.total_esperado_recurrentes + g.total_egresos_directos)::numeric(15,2) AS desembolso_bruto_mes,
         (t.total_tarjetas + r.total_esperado_recurrentes + g.total_egresos_directos - reem.total_por_cobrar_terceros)::numeric(15,2) AS gasto_neto_real_tuyo,
-        (i.total_ingresos - (t.total_tarjetas + r.total_esperado_recurrentes + g.total_egresos_directos - reem.total_por_cobrar_terceros))::numeric(15,2) AS flujo_caja_libre_estimado
+        (i.total_ingresos - (t.total_tarjetas + r.total_esperado_recurrentes + g.total_egresos_directos - reem.total_por_cobrar_terceros))::numeric(15,2) AS flujo_caja_libre_estimado,
+        COALESCE((SELECT SUM(monto_cop) FROM "Transacciones" WHERE owner_user_id = ${ownerUserId}::int8 AND estado = 'CONFIRMADO' AND to_char(fecha_transaccion, 'YYYY-MM') = ${periodo}::text AND ((COALESCE(es_transferencia_interna, false) = true AND tipo_transaccion = 'EGRESO') OR tipo_transaccion = 'TRANSFERENCIA')), 0)::numeric(15,2) AS total_transferencias_internas
       FROM ingresos_mes i
       CROSS JOIN gastos_diarios_mes g
       CROSS JOIN tarjetas_mes t

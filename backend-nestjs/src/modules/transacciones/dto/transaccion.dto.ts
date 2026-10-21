@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsInt,
@@ -89,6 +90,75 @@ export class CreateTransaccionDto {
   @IsOptional()
   @IsString()
   notas?: string;
+
+  @ApiPropertyOptional({ description: 'Iteración 2 — Fase 4: marca como transferencia entre cuentas propias' })
+  @IsOptional()
+  @IsBoolean()
+  esTransferenciaInterna?: boolean;
+
+  @ApiPropertyOptional({ description: 'Iteración 2 — Fase 4: cuenta contraparte de la transferencia interna' })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  cuentaContraparteId?: number;
+}
+
+/** Iteración 2 — Fase 4: DTO para crear un par espejo de transferencia entre cuentas propias. */
+export class CrearTransferenciaInternaDto {
+  @ApiProperty({ description: 'Cuenta de donde sale el dinero' })
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  cuentaOrigenId: number;
+
+  @ApiProperty({ description: 'Cuenta propia donde entra el dinero' })
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  cuentaDestinoId: number;
+
+  @ApiProperty({ example: '500000.00', description: 'Monto transferido (> 0, máx. 2 decimales)' })
+  @IsMoney({ maxDecimals: 2, positive: true })
+  monto: number | string;
+
+  @ApiPropertyOptional({ example: 'COP' })
+  @IsOptional()
+  @IsString()
+  @Length(3, 3)
+  monedaOriginal?: string;
+
+  @ApiPropertyOptional({ example: '4150.0000' })
+  @IsOptional()
+  @IsMoney({ maxDecimals: 4, positive: true })
+  tasaCambio?: number | string;
+
+  @ApiPropertyOptional({ example: '2026-10-15T12:00:00-05:00' })
+  @IsOptional()
+  @IsDateString()
+  fechaTransaccion?: string;
+
+  @ApiPropertyOptional({ example: 'Traslado a cuenta de ahorros secundaria' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  concepto?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notas?: string;
+
+  @ApiPropertyOptional({ description: 'Costo opcional de comisión bancaria o GMF (4x1000) registrado como gasto real separado' })
+  @IsOptional()
+  @IsMoney({ maxDecimals: 2, positive: true })
+  comisionGMF?: number | string;
+
+  @ApiPropertyOptional({ description: 'Categoría opcional para el gasto del 4x1000 / comisión' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsPositive()
+  categoriaComisionId?: number;
 }
 
 /** `PATCH /api/v2/transacciones/:id` — el Trigger 2 revierte el impacto anterior y aplica el nuevo. */
@@ -214,6 +284,12 @@ export class TransaccionesFiltroDto {
   @IsOptional()
   @IsEnum(EstadoTransaccion)
   estado?: EstadoTransaccion;
+
+  @ApiPropertyOptional({ description: 'Filtrar por es_transferencia_interna (true/false)' })
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' || value === true ? true : value === 'false' || value === false ? false : undefined))
+  @IsBoolean()
+  esTransferenciaInterna?: boolean;
 
   @ApiPropertyOptional({ default: 100, maximum: 500 })
   @IsOptional()
