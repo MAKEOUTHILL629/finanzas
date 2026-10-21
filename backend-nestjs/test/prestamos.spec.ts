@@ -84,6 +84,55 @@ describe('PrestamosService.create (POST /api/prestamos)', () => {
     });
     expect(prisma.prestamos.create.mock.calls[0][0].data.fecha_prestamo.toISOString()).toBe('2024-05-20T00:00:00.000Z');
   });
+
+  it('Iteración 2 Fase 5: enlaza transaccionDesembolsoId existente, le asigna categoría Préstamos / Desembolsos y detecta notificacion_correo_id', async () => {
+    const { prisma, prestamos } = setup();
+    prisma.personas.findFirst.mockImplementation(async ({ where }: any) => ({ id: where.id ?? 1n }));
+    prisma.cortesCobro.findFirst.mockResolvedValue({ id: 12n });
+    prisma.transacciones.findFirst.mockResolvedValue({ id: 55n, owner_user_id: OWNER, cuenta_origen_id: 3n, categoria_id: null });
+    prisma.categorias.findFirst.mockResolvedValue({ id: 91n });
+    prisma.transacciones.update.mockResolvedValue({ id: 55n });
+    prisma.notificacionesCorreo.findFirst.mockResolvedValue({ id: 777n });
+    prisma.prestamos.create.mockResolvedValue({ id: 99n });
+
+    const id = await prestamos.create(
+      { ...dtoLegacy, transaccionDesembolsoId: 55 },
+      OWNER,
+    );
+
+    expect(id).toBe(99);
+    expect(prisma.transacciones.update).toHaveBeenCalledWith({
+      where: { id: 55n },
+      data: { categoria_id: 91n },
+    });
+    expect(prisma.prestamos.create.mock.calls[0][0].data).toMatchObject({
+      transaccion_desembolso_id: 55n,
+      notificacion_correo_id: 777n,
+      cuenta_origen_desembolso_id: 3n,
+    });
+  });
+
+  it('Iteración 2 Fase 5: crea transacción de desembolso automáticamente cuando cuentaOrigenDesembolsoId + crearTransaccionTransferencia = true', async () => {
+    const { prisma, prestamos } = setup();
+    prisma.personas.findFirst.mockImplementation(async ({ where }: any) => ({ id: where.id ?? 1n }));
+    prisma.cortesCobro.findFirst.mockResolvedValue({ id: 12n });
+    prisma.cuentasFinancieras.findFirst.mockResolvedValue({ id: 4n });
+    prisma.categorias.findFirst.mockResolvedValue({ id: 91n });
+    prisma.transacciones.create.mockResolvedValue({ id: 66n });
+    prisma.prestamos.create.mockResolvedValue({ id: 100n });
+
+    const id = await prestamos.create(
+      { ...dtoLegacy, cuentaOrigenDesembolsoId: 4, crearTransaccionTransferencia: true },
+      OWNER,
+    );
+
+    expect(id).toBe(100);
+    expect(prisma.transacciones.create).toHaveBeenCalledTimes(1);
+    expect(prisma.prestamos.create.mock.calls[0][0].data).toMatchObject({
+      transaccion_desembolso_id: 66n,
+      cuenta_origen_desembolso_id: 4n,
+    });
+  });
 });
 
 describe('PrestamosService.update — pasar a Pagado', () => {

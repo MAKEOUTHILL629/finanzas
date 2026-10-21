@@ -434,7 +434,7 @@ export class NotificacionesCorreoService {
         if (!transaccion) {
           throw datosInvalidos({ convertirEnPrestamo: ['Solo se puede convertir en préstamo una notificación con transacción de egreso'] });
         }
-        prestamoId = await this.convertirEnPrestamo(tx, transaccion, dto, ownerUserId);
+        prestamoId = await this.convertirEnPrestamo(tx, transaccion, dto, ownerUserId, notificacion.id);
       }
 
       const actualizada = await tx.notificacionesCorreo.update({
@@ -639,7 +639,7 @@ export class NotificacionesCorreoService {
     return tx.comprasCredito.findUniqueOrThrow({ where: { id: BigInt(id) } });
   }
 
-  private async convertirEnPrestamo(tx: Tx, transaccion: Transacciones, dto: ConciliarCorreoDto, ownerUserId: bigint): Promise<number> {
+  private async convertirEnPrestamo(tx: Tx, transaccion: Transacciones, dto: ConciliarCorreoDto, ownerUserId: bigint, notificacionId?: bigint): Promise<number> {
     const p = dto.convertirEnPrestamo as NonNullable<ConciliarCorreoDto['convertirEnPrestamo']>;
     if (transaccion.tipo_transaccion !== TipoTransaccion.EGRESO && transaccion.tipo_transaccion !== TipoTransaccion.TRANSFERENCIA) {
       throw datosInvalidos({ convertirEnPrestamo: ['Solo un egreso o transferencia puede convertirse en préstamo'] });
@@ -656,6 +656,9 @@ export class NotificacionesCorreoService {
         comentarios: [p.comentarios, `Originado en la transacción #${transaccion.id}`].filter(Boolean).join(' · '),
         fechaPrestamo: fechaTransaccion,
         metodo: p.metodo,
+        transaccionDesembolsoId: Number(transaccion.id),
+        ...(notificacionId ? { notificacionCorreoId: Number(notificacionId) } : {}),
+        ...(transaccion.cuenta_origen_id ? { cuentaOrigenDesembolsoId: Number(transaccion.cuenta_origen_id) } : {}),
       },
       ownerUserId,
     );

@@ -88,6 +88,29 @@ export class CreatePrestamoDto {
   @IsOptional()
   @IsNumber()
   cuotaMensualAcordada?: number | string;
+
+  @ApiPropertyOptional({ description: 'Iteración 2 Fase 5: ID de la transacción de transferencia/egreso existente vinculada al préstamo' })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  transaccionDesembolsoId?: number;
+
+  @ApiPropertyOptional({ description: 'Iteración 2 Fase 5: ID de la notificación de correo bancaria asociada al desembolso' })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  notificacionCorreoId?: number;
+
+  @ApiPropertyOptional({ description: 'Iteración 2 Fase 5: Cuenta financiera origen desde la cual salió el dinero prestado' })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  cuentaOrigenDesembolsoId?: number;
+
+  @ApiPropertyOptional({ description: 'Iteración 2 Fase 5: Si es true y viene cuentaOrigenDesembolsoId, crea automáticamente la transacción de salida' })
+  @IsOptional()
+  @IsBoolean()
+  crearTransaccionTransferencia?: boolean;
 }
 
 /** `PATCH /api/v2/prestamos/:id` */
@@ -131,6 +154,26 @@ export class UpdatePrestamoDto {
   @IsOptional()
   @IsString()
   cuentaDestinoTercero?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  transaccionDesembolsoId?: number | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  notificacionCorreoId?: number | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  cuentaOrigenDesembolsoId?: number | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  crearTransaccionTransferencia?: boolean;
 }
 
 /** `POST /api/v2/prestamos/:id/abonos-con-comprobante` (Fase 6) */
