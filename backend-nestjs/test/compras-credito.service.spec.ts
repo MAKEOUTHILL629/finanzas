@@ -427,3 +427,184 @@ describe('ComprasCreditoService.confirmarTrm (SP sp_actualizar_trm_compra_usd)',
     expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 });
+
+
+describe('ComprasCreditoService — Fase 1 (Iteración 3): Tags, Edición 360° y Detalle Completo', () => {
+  it('save normaliza tags y persiste comercio_canonico en ComprasCredito y Etiquetas', async () => {
+    const { prisma, service } = setup();
+    prisma.tarjetas.findFirst.mockResolvedValue({ id: 3n, dia_corte: 15, tipo_tarjeta: 'CREDITO' });
+    prisma.comprasCredito.create.mockResolvedValue({ id: 88n });
+
+    await service.save(
+      {
+        concepto: 'Pedido Rappi',
+        valorCompra: 45000,
+        fechaCompra: '2026-10-05',
+        numeroCuotas: 1,
+        interes: 0,
+        descripcion: 'Almuerzo',
+        estado: 'Pendiente',
+        tarjeta: 3,
+        tags: ['Rappi', '#domicilios', 'RAPPI'],
+        comercioCanonico: 'Rappi',
+      },
+      OWNER,
+    );
+
+    const { data } = prisma.comprasCredito.create.mock.calls[0][0];
+    expect(data.tags).toEqual(['#rappi', '#domicilios']);
+    expect(data.comercio_canonico).toBe('Rappi');
+    expect(prisma.etiquetas.upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it('patchCompra permite actualizar tags y comercioCanonico sin recalcular cuotas', async () => {
+    const { prisma, service } = setup();
+    const existente = compraBase({ tags: ['#viejo'], comercio_canonico: null });
+    prisma.comprasCredito.findFirst
+      .mockResolvedValueOnce(existente)
+      .mockResolvedValueOnce({ ...existente, tags: ['#didi-food', '#domicilios'], comercio_canonico: 'DiDi Food', plastico: null });
+    prisma.comprasCredito.update.mockResolvedValue(existente);
+
+    const res = await service.patchCompra(
+      1,
+      { tags: ['DiDi Food', '#domicilios'], comercioCanonico: 'DiDi Food' },
+      OWNER,
+    );
+
+    expect(prisma.comprasCredito.update).toHaveBeenCalledWith({
+      where: { id: 1n },
+      data: { tags: ['#didi-food', '#domicilios'], comercio_canonico: 'DiDi Food' },
+    });
+    expect(prisma.cuotasDetalle.deleteMany).not.toHaveBeenCalled();
+    expect(res.tags).toEqual(['#didi-food', '#domicilios']);
+    expect(res.comercioCanonico).toBe('DiDi Food');
+  });
+
+  it('getDetalleCompleto retorna el contexto 360° con resumenPagoUnico a 1 cuota, correo original y estadísticas de comercio', async () => {
+    const { prisma, service } = setup();
+    prisma.comprasCredito.findFirst.mockResolvedValue({
+      ...compraBase({
+        id: 10n,
+        concepto: 'DL*DIDI FOOD',
+        valor_compra: dec('60000'),
+        numero_cuotas: 1,
+        interes: dec('0'),
+        pago_mensual: dec('60000'),
+        fecha_compra: utc('2026-10-05'),
+        fecha_ultima_cuota: utc('2026-10-31'),
+        tags: ['#didi-food', '#domicilios'],
+        comercio_canonico: 'DiDi Food',
+      }),
+      tarjeta_ref: {
+        id: 1234n,
+        franquicia: 'Mastercard',
+        descripcion: 'Black',
+        es_generica: false,
+        alias: null,
+        dia_corte: 15,
+        dia_limite_pago: 5,
+        tasa_interes_compra: dec('1.9'),
+        cupo_total: dec('10000000'),
+        ultimos_4_digitos: '9491',
+        plasticos: [{ id: 7n, ultimos_4: '9491', es_activo: true }],
+      },
+      plastico: {
+        id: 7n,
+        ultimos_4: '9491',
+        es_activo: true,
+        vigente_desde: utc('2025-01-01'),
+        vigente_hasta: null,
+        notas: 'Plástico físico',
+      },
+      cuotas: [
+        {
+          id: 501n,
+          numero_cuota: 1n,
+          fecha_pago: utc('2026-10-30'),
+          saldo_restante: dec('0'),
+          interes_pagado: dec('0'),
+          aporte_capital: dec('60000'),
+          pago_total: dec('60000'),
+          estado: 'Pendiente',
+          periodo_facturacion: '2026-10',
+        },
+      ],
+      responsables: [
+        {
+          id: 301n,
+          persona: 2n,
+          porcentaje_pago: dec('50'),
+          cantidad_pago: dec('30000'),
+          cantidad_cuotas: 1,
+          persona_ref: {
+            id: 2n,
+            nombre: 'Alicia',
+            iniciales_nombre: 'AL',
+            color_representativo: '#FF2D55',
+            linked_user_id: null,
+          },
+          movimientos: [{ id: 900n, monto: dec('30000'), estado: 'PENDIENTE' }],
+        },
+      ],
+      notificaciones: [
+        {
+          id: 44n,
+          external_message_id: 'msg-44',
+          remitente: 'alertas@bancolombia.com.co',
+          asunto: 'Compra aprobada por $60.000',
+          fecha_correo: new Date('2026-10-05T14:20:00Z'),
+          cuerpo_extraido: 'Compraste $60.000 en DL*DIDI FOOD con tu tarjeta *9491',
+          datos_parseados: { comercio: 'DL*DIDI FOOD', monto: '60000' },
+          estado_procesamiento: 'CONCILIADO',
+          ultimos_4: '9491',
+          comercio_normalizado: 'didi food',
+          monto_original: dec('60000'),
+          moneda: 'COP',
+          vinculo: 'CREADA',
+        },
+      ],
+      periodos_pagados: [],
+      refinanciamiento: null,
+      absorbidas: [],
+    });
+
+    prisma.comprasCredito.findMany
+      .mockResolvedValueOnce([
+        { id: 10n, concepto: 'DL*DIDI FOOD', descripcion: '', comercio_canonico: 'DiDi Food', valor_compra: dec('60000') },
+        { id: 11n, concepto: 'DIDI FOOD CO', descripcion: '', comercio_canonico: 'DiDi Food', valor_compra: dec('40000') },
+      ])
+      .mockResolvedValueOnce([
+        { valor_compra: dec('60000') },
+        { valor_compra: dec('180000') },
+      ]);
+
+    const detalle = await service.getDetalleCompleto(10, OWNER, utc('2026-10-10'));
+    expect(detalle).not.toBeNull();
+    expect(detalle!.compra.tags).toEqual(['#didi-food', '#domicilios']);
+    expect(detalle!.tarjeta?.etiqueta).toBe('Mastercard ··9491');
+    expect(detalle!.plastico?.ultimos4).toBe('9491');
+    expect(detalle!.cuotas[0].estadoReal).toBe('EN_EXTRACTO_ACTUAL');
+    expect(detalle!.responsables[0]).toMatchObject({
+      nombre: 'Alicia',
+      porcentajePago: 50,
+      cantidadPago: 30000,
+      estadoCobroLiquidacion: 'EN_LIQUIDACION',
+    });
+    expect(detalle!.notificacionCorreo?.id).toBe(44);
+    expect(detalle!.estadisticasComercio).toEqual({
+      comercioCanonico: 'DiDi Food',
+      totalHistoricoAnio: 100000,
+      cantidadComprasAnio: 2,
+      gastoMesTarjeta: 240000,
+      porcentajeSobreGastoMesTarjeta: 25,
+    });
+    expect(detalle!.resumenPagoUnico).toEqual({
+      esUnaCuota: true,
+      fechaTransaccion: '2026-10-05',
+      fechaEstimadaPagoExtracto: '2026-10-30',
+      costoFinanciero: 0,
+      gastoMesTarjeta: 240000,
+      porcentajeSobreGastoMesTarjeta: 25,
+    });
+  });
+});

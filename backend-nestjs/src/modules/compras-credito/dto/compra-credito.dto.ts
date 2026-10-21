@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsNumber, IsOptional, IsPositive, IsString, Length, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, IsNumber, IsOptional, IsPositive, IsString, Length, Matches, Max, MaxLength, Min } from 'class-validator';
 import { IsMoney } from '../../../common/validators/is-money.decorator';
 import { EnteroOpcional, VacioAUndefined } from '../../../common/validators/normalizar-opcional.decorator';
 
@@ -24,9 +24,13 @@ export interface CompraCreditoInput {
   plasticoId?: number | bigint | null;
   /** Últimos 4 dígitos del aviso del banco: identifica el plástico sin que el llamador conozca su id (correos). */
   plasticoUltimos4?: string | null;
+  /** Tags transversales con '#' (ej. ['#rappi', '#domicilios']). */
+  tags?: string[];
+  /** Comercio canónico normalizado (ej. 'Rappi', 'DiDi Food', 'DiDi Rides'). */
+  comercioCanonico?: string | null;
 }
 
-/** `POST /api/compras-credito` — campos del contrato legacy (+ campos multimoneda opcionales). */
+/** `POST /api/compras-credito` — campos del contrato legacy (+ campos multimoneda y tags opcionales). */
 export class CreateCompraCreditoDto implements CompraCreditoInput {
   @ApiProperty({ example: 'Nevera Samsung' })
   @IsString()
@@ -89,6 +93,18 @@ export class CreateCompraCreditoDto implements CompraCreditoInput {
   @IsInt()
   @Min(1)
   plasticoId?: number;
+
+  @ApiPropertyOptional({ type: [String], example: ['#domicilios', '#rappi'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+
+  @ApiPropertyOptional({ example: 'Rappi' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  comercioCanonico?: string;
 }
 
 /** `PUT /api/compras-credito` y `POST /api/recalcular-compra-credito`. */
@@ -113,10 +129,9 @@ export class ConfirmarTrmDto {
   confirmarDefinitivo?: boolean;
 }
 
-
 /**
- * `PATCH /api/compras-credito/:id` — edición en línea del detalle: solo se envía lo que cambió. Texto, estado y plástico son
- * una actualización simple; valor, cuotas, interés, fecha o tarjeta recalculan las cuotas.
+ * `PATCH /api/compras-credito/:id` — edición en línea del detalle: solo se envía lo que cambió. Texto, estado, plástico, tags y comercio
+ * son una actualización simple; valor, cuotas, interés, fecha o tarjeta recalculan las cuotas.
  */
 export class PatchCompraCreditoDto {
   @ApiPropertyOptional({ example: 'Nevera Samsung' })
@@ -178,4 +193,16 @@ export class PatchCompraCreditoDto {
   @IsInt()
   @IsPositive()
   tarjeta?: number;
+
+  @ApiPropertyOptional({ type: [String], example: ['#domicilios', '#rappi'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+
+  @ApiPropertyOptional({ example: 'Rappi' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  comercioCanonico?: string | null;
 }

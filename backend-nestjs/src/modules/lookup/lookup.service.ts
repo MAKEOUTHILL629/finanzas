@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { idNum, numOrNull } from '../../common/utils/legacy-format.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { normalizarTagSlug } from '../notificaciones-correo/comercio.util';
 import { EstadoPlastico, TipoTarjeta, estadosDePlasticos } from '../tarjetas/tipos-tarjeta.util';
 
 export const TIPOS_CATALOGO = ['personas', 'tarjetas', 'cuentas', 'categorias'] as const;
@@ -82,11 +83,65 @@ export interface ItemCategoria {
   delSistema: boolean;
 }
 
+export interface ItemTagCatalogo {
+  slug: string;
+  nombre: string;
+  frecuencia: number;
+  color: string;
+}
+
 export interface Catalogos {
   personas?: ItemPersona[];
   tarjetas?: ItemTarjeta[];
   cuentas?: ItemCuenta[];
   categorias?: ItemCategoria[];
+}
+
+const PALETA_TAGS: ReadonlyArray<string> = [
+  '#007AFF',
+  '#34C759',
+  '#FF9500',
+  '#AF52DE',
+  '#FF2D55',
+  '#5856D6',
+  '#00C7BE',
+  '#FF3B30',
+];
+
+const TAGS_SUGERIDOS_BASE: ReadonlyArray<{ slug: string; nombre: string; color: string }> = [
+  { slug: '#rappi', nombre: 'Rappi', color: '#FF3B30' },
+  { slug: '#didi-food', nombre: 'DiDi Food', color: '#FF9500' },
+  { slug: '#didi-rides', nombre: 'DiDi Rides', color: '#007AFF' },
+  { slug: '#domicilios', nombre: 'Domicilios', color: '#FF9500' },
+  { slug: '#transporte', nombre: 'Transporte', color: '#007AFF' },
+  { slug: '#comida', nombre: 'Comida', color: '#34C759' },
+  { slug: '#viajes', nombre: 'Viajes', color: '#5856D6' },
+  { slug: '#ropa', nombre: 'Ropa', color: '#AF52DE' },
+  { slug: '#suscripciones', nombre: 'Suscripciones', color: '#FF2D55' },
+  { slug: '#mercado', nombre: 'Mercado', color: '#34C759' },
+  { slug: '#hogar', nombre: 'Hogar', color: '#00C7BE' },
+  { slug: '#recurrente', nombre: 'Recurrente', color: '#5856D6' },
+];
+
+export function colorSugeridoTag(slug: string): string {
+  const predefinido = TAGS_SUGERIDOS_BASE.find((t) => t.slug === slug);
+  if (predefinido) return predefinido.color;
+  let hash = 0;
+  for (let i = 0; i < slug.length; i++) {
+    hash = (hash * 31 + slug.charCodeAt(i)) >>> 0;
+  }
+  return PALETA_TAGS[hash % PALETA_TAGS.length];
+}
+
+export function nombreLegibleTag(slug: string): string {
+  const predefinido = TAGS_SUGERIDOS_BASE.find((t) => t.slug === slug);
+  if (predefinido) return predefinido.nombre;
+  const sinHash = slug.replace(/^#+/, '').replace(/[-_]+/g, ' ').trim();
+  if (!sinHash) return slug;
+  return sinHash
+    .split(' ')
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+    .join(' ');
 }
 
 const dia = (d: Date | null): string | null => (d ? d.toISOString().slice(0, 10) : null);
@@ -223,5 +278,75 @@ export class LookupService {
       orderBy: [{ nombre: 'asc' }, { id: 'asc' }],
     });
     return filas.map((c) => ({ id: idNum(c.id), nombre: c.nombre, tipo: c.tipo, color: c.color, icono: c.icono, delSistema: c.owner_user_id === null }));
+  }
+
+  /**
+   * `GET /api/lookup/tags` — Catálogo de tags del usuario consolidando:
+   *  1. Etiquetas personalizadas en `"Etiquetas"`
+   *  2. Frecuencia real de uso en `"ComprasCredito"` y `"Transacciones"`
+   *  3. Tags sugeridos base para autocompletado rápido
+   */
+  async tags(ownerUserId: bigint): Promise<ItemTagCatalogo[]> {
+    const [etiquetas, compras, transacciones] = await Promise.all([
+      this.prisma.etiquetas
+        ? this.prisma.etiquetas.findMany({
+            where: { owner_user_id: ownerUserId },
+            select: { slug: true, nombre: true, color: true },
+          })
+        : Promise.resolve([]),
+      this.prisma.comprasCredito.findMany({
+        where: { owner_user_id: ownerUserId },
+        select: { tags: true },
+      }),
+      this.prisma.transacciones.findMany({
+        where: { owner_user_id: ownerUserId },
+        select: { tags: true },
+      }),
+    ]);
+
+    const mapa = new Map<string, ItemTagCatalogo>();
+
+    for (const base of TAGS_SUGERIDOS_BASE) {
+      mapa.set(base.slug, {
+        slug: base.slug,
+        nombre: base.nombre,
+        frecuencia: 0,
+        color: base.color,
+      });
+    }
+
+    for (const et of etiquetas ?? []) {
+      const slug = normalizarTagSlug(et.slug);
+      if (!slug) continue;
+      mapa.set(slug, {
+        slug,
+        nombre: et.nombre?.trim() || nombreLegibleTag(slug),
+        frecuencia: mapa.get(slug)?.frecuencia ?? 0,
+        color: et.color || colorSugeridoTag(slug),
+      });
+    }
+
+    const acumular = (listaTags: string[] | null | undefined) => {
+      for (const raw of listaTags ?? []) {
+        const slug = normalizarTagSlug(raw);
+        if (!slug) continue;
+        const actual = mapa.get(slug);
+        if (actual) {
+          actual.frecuencia += 1;
+        } else {
+          mapa.set(slug, {
+            slug,
+            nombre: nombreLegibleTag(slug),
+            frecuencia: 1,
+            color: colorSugeridoTag(slug),
+          });
+        }
+      }
+    };
+
+    for (const c of compras ?? []) acumular(c.tags);
+    for (const t of transacciones ?? []) acumular(t.tags);
+
+    return [...mapa.values()].sort((a, b) => b.frecuencia - a.frecuencia || a.slug.localeCompare(b.slug));
   }
 }

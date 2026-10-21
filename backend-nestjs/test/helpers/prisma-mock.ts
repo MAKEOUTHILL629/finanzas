@@ -12,6 +12,7 @@ export function modelMock(): Record<string, jest.Mock> {
     createMany: jest.fn().mockResolvedValue({ count: 0 }),
     update: jest.fn(),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    upsert: jest.fn(),
     delete: jest.fn(),
     deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     count: jest.fn().mockResolvedValue(0),
@@ -41,6 +42,12 @@ export const MODELOS = [
   'aportesDetalle',
   'crucesDeuda',
   'movimientosDeudaPersona',
+  'etiquetas',
+  'reglasAutoTag',
+  'enlacesCobroPersona',
+  'reportesPagoPersona',
+  'aportesColaborativosCuota',
+  'abonosPrestamoPasivo',
 ] as const;
 
 /**

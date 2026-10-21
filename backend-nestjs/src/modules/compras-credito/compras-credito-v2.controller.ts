@@ -1,16 +1,25 @@
-import { Body, Controller, Param, ParseIntPipe, Patch } from '@nestjs/common';
+import { Body, Controller, Get, Header, Param, ParseIntPipe, Patch } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { legacyTry } from '../../common/utils/legacy-http.util';
 import { ComprasCreditoService } from './compras-credito.service';
 import { ConfirmarTrmDto, PatchCompraCreditoDto } from './dto/compra-credito.dto';
 
-/** ERP v2 — compras multimoneda. */
+/** ERP v2 — compras multimoneda, edición 360° y detalle enriquecido. */
 @ApiTags('Compras Crédito v2')
 @ApiBearerAuth()
-@Controller('api/compras-credito')
+@Controller(['api/compras-credito', 'api/v2/compras-credito'])
 export class ComprasCreditoV2Controller {
   constructor(private readonly compras: ComprasCreditoService) {}
+
+  @Get(':id/detalle-completo')
+  @Header('Content-Type', 'application/json; charset=utf-8')
+  @ApiOperation({
+    summary: 'Detalle 360° enriquecido de una compra a crédito (tarjeta, plástico, responsables, correo original, refinanciamiento, recurrencia y estadísticas del comercio)',
+  })
+  async detalleCompleto(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
+    return (await this.compras.getDetalleCompleto(id, userId)) ?? 'null';
+  }
 
   @Patch(':id/confirmar-trm')
   @ApiOperation({
@@ -32,7 +41,7 @@ export class ComprasCreditoV2Controller {
   @ApiOperation({
     summary: 'Edición en línea del detalle de una compra: cambia solo lo enviado',
     description:
-      'Concepto, descripción, estado y plástico son una actualización simple. Valor, cuotas, interés, fecha o tarjeta recalculan las cuotas ' +
+      'Concepto, descripción, estado, plástico, tags y comercio canónico son una actualización simple. Valor, cuotas, interés, fecha o tarjeta recalculan las cuotas ' +
       'y no se permiten en una compra ya unificada en un refinanciamiento (409).',
   })
   parcial(@Param('id', ParseIntPipe) id: number, @Body() dto: PatchCompraCreditoDto, @CurrentUser('userId') userId: bigint) {

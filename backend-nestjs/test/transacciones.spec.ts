@@ -178,3 +178,30 @@ describe('TransaccionesService', () => {
     expect(r.total).toBe(3);
   });
 });
+
+
+describe('TransaccionesService — Fase 1 (Iteración 3): Tags y Comercio Canónico', () => {
+  it('create y update normalizan tags y sincronizan catálogo de Etiquetas', async () => {
+    const prisma = createPrismaMock();
+    prisma.cuentasFinancieras.findFirst.mockResolvedValue({ id: 1n, owner_user_id: OWNER });
+    prisma.transacciones.create.mockImplementation(async ({ data }: any) => ({ id: 700n, ...data }));
+    const service = new TransaccionesService(prisma);
+
+    await service.create(
+      {
+        tipoTransaccion: T.EGRESO,
+        cuentaOrigenId: 1,
+        concepto: 'Pedido Rappi',
+        montoOriginal: 32000,
+        tags: ['Rappi', '#domicilios'],
+        comercioCanonico: 'Rappi',
+      },
+      OWNER,
+    );
+
+    const createdData = prisma.transacciones.create.mock.calls[0][0].data;
+    expect(createdData.tags).toEqual(['#rappi', '#domicilios']);
+    expect(createdData.comercio_canonico).toBe('Rappi');
+    expect(prisma.etiquetas.upsert).toHaveBeenCalledTimes(2);
+  });
+});

@@ -22,6 +22,12 @@ export class LookupController {
     return this.lookup.catalogos(userId, lista);
   }
 
+  @Get('tags')
+  @ApiOperation({ summary: 'Catálogo de tags existentes con frecuencia de uso y color sugerido' })
+  tags(@CurrentUser('userId') userId: bigint) {
+    return this.lookup.tags(userId);
+  }
+
   @Get(':tipo')
   @ApiOperation({ summary: 'Un catálogo como arreglo plano' })
   @ApiParam({ name: 'tipo', enum: TIPOS_CATALOGO })

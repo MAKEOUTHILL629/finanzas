@@ -96,4 +96,23 @@ describe('LookupService — forma uniforme y filtrado por usuario', () => {
     expect(prisma.categorias.findMany).not.toHaveBeenCalled();
     expect(Object.keys(await service.catalogos(OWNER, ['personas', 'tarjetas', 'cuentas', 'categorias']))).toEqual(['personas', 'tarjetas', 'cuentas', 'categorias']);
   });
+
+  it('tags: consolida etiquetas del usuario, frecuencias reales en compras/transacciones y sugerencias base', async () => {
+    const { prisma, service } = setup();
+    prisma.etiquetas.findMany.mockResolvedValue([
+      { slug: '#mascota', nombre: 'Mascota', color: '#AF52DE' },
+    ]);
+    prisma.comprasCredito.findMany.mockResolvedValue([
+      { tags: ['#rappi', '#domicilios'] },
+      { tags: ['rappi', '#mascota'] },
+    ]);
+    prisma.transacciones.findMany.mockResolvedValue([
+      { tags: ['#rappi'] },
+    ]);
+
+    const tags = await service.tags(OWNER);
+    expect(tags[0]).toMatchObject({ slug: '#rappi', nombre: 'Rappi', frecuencia: 3 });
+    const mascota = tags.find((t) => t.slug === '#mascota');
+    expect(mascota).toEqual({ slug: '#mascota', nombre: 'Mascota', frecuencia: 1, color: '#AF52DE' });
+  });
 });

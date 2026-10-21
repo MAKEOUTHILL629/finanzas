@@ -6,7 +6,7 @@
  * ("DIDI FOODS", "PIZZAS DIDI"). Para reconocer «el mismo comercio» se reducen ambos a una forma canónica.
  */
 
-const sinTildes = (t: string): string => t.normalize('NFD').replace(/[̀-ͯ]/g, '');
+const sinTildes = (t: string): string => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
 /** Prefijos/sufijos de pasarela de pago que no forman parte del nombre del comercio. */
 const PASARELAS = new Set(['dl', 'dlo', 'payu', 'bold', 'pse', 'sq', 'tpaga', 'wompi', 'epayco', 'paypal']);
@@ -76,6 +76,37 @@ export function mismoComercio(a: string, b: string, umbral = 0.6): boolean {
 export interface ComercioYTags {
   comercioCanonico: string | null;
   tags: string[];
+}
+
+/**
+ * Normaliza un tag individual a formato slug con '#' (ej. "DiDi Food" -> "#didi-food").
+ */
+export function normalizarTagSlug(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const limpio = sinTildes(raw)
+    .trim()
+    .toLowerCase()
+    .replace(/^#+/, '')
+    .replace(/[^a-z0-9-_]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+  return limpio ? `#${limpio}` : '';
+}
+
+/**
+ * Normaliza una lista de tags: separa por comas si vienen juntos, antepone '#', convierte a minúsculas y elimina duplicados.
+ */
+export function normalizarTags(tags: ReadonlyArray<string> | undefined | null): string[] {
+  if (!tags || tags.length === 0) return [];
+  const unicos = new Set<string>();
+  for (const item of tags) {
+    if (typeof item !== 'string') continue;
+    for (const parte of item.split(',')) {
+      const slug = normalizarTagSlug(parte);
+      if (slug) unicos.add(slug);
+    }
+  }
+  return [...unicos];
 }
 
 /**

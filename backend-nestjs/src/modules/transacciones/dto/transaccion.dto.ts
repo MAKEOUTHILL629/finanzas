@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -101,6 +102,18 @@ export class CreateTransaccionDto {
   @IsInt()
   @IsPositive()
   cuentaContraparteId?: number;
+
+  @ApiPropertyOptional({ type: [String], example: ['#rappi', '#domicilios'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+
+  @ApiPropertyOptional({ example: 'Rappi' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  comercioCanonico?: string;
 }
 
 /** Iteración 2 — Fase 4: DTO para crear un par espejo de transferencia entre cuentas propias. */
@@ -159,6 +172,12 @@ export class CrearTransferenciaInternaDto {
   @IsInt()
   @IsPositive()
   categoriaComisionId?: number;
+
+  @ApiPropertyOptional({ type: [String], example: ['#transferencias'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
 }
 
 /** `PATCH /api/v2/transacciones/:id` — el Trigger 2 revierte el impacto anterior y aplica el nuevo. */
@@ -223,6 +242,18 @@ export class UpdateTransaccionDto {
   @IsOptional()
   @IsString()
   notas?: string;
+
+  @ApiPropertyOptional({ type: [String], example: ['#rappi', '#domicilios'] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+
+  @ApiPropertyOptional({ nullable: true, example: 'Rappi' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  comercioCanonico?: string | null;
 }
 
 export class TransaccionesFiltroDto {
@@ -291,6 +322,11 @@ export class TransaccionesFiltroDto {
   @IsBoolean()
   esTransferenciaInterna?: boolean;
 
+  @ApiPropertyOptional({ description: 'Filtrar por tag (ej. #rappi o rappi)' })
+  @IsOptional()
+  @IsString()
+  tag?: string;
+
   @ApiPropertyOptional({ default: 100, maximum: 500 })
   @IsOptional()
   @Type(() => Number)
@@ -304,5 +340,6 @@ export class TransaccionesFiltroDto {
   @Type(() => Number)
   @IsInt()
   @Min(0)
+  @Max(100000)
   offset?: number;
 }

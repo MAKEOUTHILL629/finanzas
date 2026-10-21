@@ -12,6 +12,8 @@ import { money, rate, sumDecimals, toDb, toDbMoney, toDbRate, toDecimal } from '
 import { dateToMillis, idNum, num, numOrNull, timestampToDayMillis } from '../../common/utils/legacy-format.util';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { colorSugeridoTag, nombreLegibleTag } from '../lookup/lookup.service';
+import { inferirComercioYTags, normalizarComercio, normalizarTags } from '../notificaciones-correo/comercio.util';
 import { resolverPlasticoCompra } from '../tarjetas/plasticos.db';
 import { CompraCreditoInput } from './dto/compra-credito.dto';
 
@@ -44,6 +46,8 @@ export interface PatchCompraCreditoInput {
   numeroCuotas?: number;
   interes?: number | string;
   tarjeta?: number;
+  tags?: string[];
+  comercioCanonico?: string | null;
 }
 
 /** Forma JSON idéntica a `Json.writes[CompraCredito]` del legacy (+ campos multimoneda como extra). */
@@ -81,6 +85,110 @@ export interface CompraCreditoJson {
   /** Tags transversales (Fase 2, sql/011). */
   tags: string[];
   comercioCanonico: string | null;
+}
+
+export type EstadoRealCuota = 'PAGADA' | 'EN_EXTRACTO_ACTUAL' | 'FUTURA' | 'ABSORBIDA_REFINANCIAMIENTO';
+
+export interface DetalleCompletoCompraCredito {
+  compra: CompraCreditoJson;
+  tarjeta: {
+    id: number;
+    nombre: string;
+    franquicia: string | null;
+    descripcion: string | null;
+    etiqueta: string;
+    ultimos4Activo: string | null;
+    diaCorte: number | null;
+    diaLimitePago: number | null;
+    tasaInteresCompra: number | null;
+    cupoTotal: number | null;
+  } | null;
+  plastico: {
+    id: number;
+    ultimos4: string;
+    esActivo: boolean;
+    vigenteDesde: string | null;
+    vigenteHasta: string | null;
+    tipo: string;
+  } | null;
+  cuotas: Array<{
+    id: number;
+    numeroCuota: number;
+    fechaPago: number | null;
+    fechaPagoIso: string | null;
+    saldoRestante: number;
+    interesPagado: number;
+    aporteCapital: number;
+    pagoTotal: number;
+    estado: string | null;
+    estadoReal: EstadoRealCuota;
+    periodoFacturacion: string | null;
+  }>;
+  responsables: Array<{
+    id: number;
+    personaId: number | null;
+    nombre: string;
+    iniciales: string | null;
+    color: string | null;
+    esPropia: boolean;
+    porcentajePago: number;
+    cantidadPago: number;
+    cantidadCuotas: number;
+    estadoCobroLiquidacion: 'COBRADO' | 'EN_LIQUIDACION' | 'PENDIENTE' | 'PROPIO';
+    montoCobrado: number;
+  }>;
+  notificacionCorreo: {
+    id: number;
+    externalMessageId: string;
+    remitente: string | null;
+    asunto: string | null;
+    fechaCorreo: string;
+    cuerpoExtraido: string | null;
+    datosParseados: unknown;
+    estadoProcesamiento: string | null;
+    ultimos4: string | null;
+    comercioNormalizado: string | null;
+    montoOriginal: number | null;
+    moneda: string | null;
+    vinculo: string | null;
+  } | null;
+  refinanciamiento: {
+    id: number;
+    concepto: string | null;
+    esMaestra: boolean;
+    maestraId: number;
+    fechaCompra: string | null;
+    saldoUnificado: number;
+    numeroCuotas: number;
+    tasaMensual: number;
+    cuotaMensual: number;
+    sistemaAmortizacion: string;
+    absorbidasCount: number;
+  } | null;
+  recurrencia: {
+    id: number;
+    plantillaId: number;
+    nombre: string;
+    frecuencia: string | null;
+    montoBaseEstimado: number;
+    ultimoPeriodo: string | null;
+    activa: boolean;
+  } | null;
+  estadisticasComercio: {
+    comercioCanonico: string;
+    totalHistoricoAnio: number;
+    cantidadComprasAnio: number;
+    gastoMesTarjeta: number;
+    porcentajeSobreGastoMesTarjeta: number;
+  };
+  resumenPagoUnico: {
+    esUnaCuota: boolean;
+    fechaTransaccion: string | null;
+    fechaEstimadaPagoExtracto: string | null;
+    costoFinanciero: number;
+    gastoMesTarjeta: number;
+    porcentajeSobreGastoMesTarjeta: number;
+  };
 }
 
 @Injectable()
@@ -121,11 +229,306 @@ export class ComprasCreditoService {
     return compra ? this.toJson(compra, '', 0, compra.plastico?.ultimos_4 ?? null) : null;
   }
 
+  /**
+   * `GET /api/v2/compras-credito/:id/detalle-completo` — Fase 1 (Iteración 3):
+   * Devuelve el inspector financiero 360° en una sola consulta con trazabilidad de tarjeta/plástico,
+   * responsables con estado de cobro, correo bancario original, refinanciamiento, recurrencia,
+   * estadísticas anuales del comercio y resumen de pago único al corte.
+   */
+  async getDetalleCompleto(id: number, ownerUserId: bigint, hoy: Date = todayLocal()): Promise<DetalleCompletoCompraCredito | null> {
+    const compra = await this.prisma.comprasCredito.findFirst({
+      where: { id: BigInt(id), owner_user_id: ownerUserId },
+      include: {
+        tarjeta_ref: {
+          include: {
+            plasticos: { orderBy: { id: 'desc' } },
+          },
+        },
+        plastico: true,
+        cuotas: { orderBy: { numero_cuota: 'asc' } },
+        responsables: {
+          include: {
+            persona_ref: true,
+            movimientos: true,
+          },
+          orderBy: { id: 'asc' },
+        },
+        notificaciones: {
+          orderBy: { fecha_correo: 'desc' },
+          take: 1,
+        },
+        periodos_pagados: {
+          include: { plantilla: true },
+          orderBy: { periodo: 'desc' },
+          take: 1,
+        },
+        refinanciamiento: {
+          include: { _count: { select: { absorbidas: true } } },
+        },
+        absorbidas: {
+          select: { id: true },
+        },
+      },
+    });
+    if (!compra) return null;
+
+    const responsablesCsv = (compra.responsables ?? [])
+      .map((r) => r.persona)
+      .filter((p): p is bigint => p !== null)
+      .join(',');
+    const porcentajeTotal = sumDecimals((compra.responsables ?? []).map((r) => r.porcentaje_pago)).toNumber();
+    const compraJson = this.toJson(compra, responsablesCsv, porcentajeTotal, compra.plastico?.ultimos_4 ?? null);
+
+    // 1. Tarjeta y plástico
+    const tRef = compra.tarjeta_ref;
+    const activo = tRef?.plasticos?.find((p) => p.es_activo)?.ultimos_4 ?? tRef?.ultimos_4_digitos?.split(',')[0] ?? null;
+    const nombreTarjeta = tRef ? [tRef.franquicia, tRef.descripcion].filter(Boolean).join(' · ') || `Tarjeta #${tRef.id}` : null;
+    const tarjetaInfo = tRef
+      ? {
+          id: idNum(tRef.id),
+          nombre: nombreTarjeta!,
+          franquicia: tRef.franquicia,
+          descripcion: tRef.descripcion,
+          etiqueta: `${(tRef.es_generica ? tRef.alias : null) || tRef.franquicia || nombreTarjeta}${activo ? ` ··${activo}` : ''}`,
+          ultimos4Activo: activo,
+          diaCorte: tRef.dia_corte,
+          diaLimitePago: tRef.dia_limite_pago,
+          tasaInteresCompra: numOrNull(tRef.tasa_interes_compra),
+          cupoTotal: numOrNull(tRef.cupo_total),
+        }
+      : null;
+
+    const pRef = compra.plastico;
+    const plasticoInfo = pRef
+      ? {
+          id: idNum(pRef.id),
+          ultimos4: pRef.ultimos_4,
+          esActivo: pRef.es_activo,
+          vigenteDesde: pRef.vigente_desde ? pRef.vigente_desde.toISOString().slice(0, 10) : null,
+          vigenteHasta: pRef.vigente_hasta ? pRef.vigente_hasta.toISOString().slice(0, 10) : null,
+          tipo: (pRef.notas ?? '').toLowerCase().includes('virtual') ? 'VIRTUAL' : 'FISICO',
+        }
+      : null;
+
+    // 2. Cuotas con estado real
+    const periodoActual = hoy.toISOString().slice(0, 7);
+    let primeraPendienteMarcada = false;
+    const cuotasInfo = (compra.cuotas ?? []).map((q) => {
+      const est = (q.estado ?? '').toLowerCase();
+      const iso = q.fecha_pago ? q.fecha_pago.toISOString().slice(0, 10) : null;
+      const per = q.periodo_facturacion ?? (iso ? iso.slice(0, 7) : null);
+      let estadoReal: EstadoRealCuota = 'FUTURA';
+      if (est.startsWith('pagad')) {
+        estadoReal = 'PAGADA';
+      } else if (est.startsWith('refinanci') || est.startsWith('ajuste') || est.startsWith('absorbid')) {
+        estadoReal = 'ABSORBIDA_REFINANCIAMIENTO';
+      } else if (!primeraPendienteMarcada && (per === periodoActual || (q.fecha_pago && q.fecha_pago.getTime() <= hoy.getTime() + 31 * 86_400_000))) {
+        estadoReal = 'EN_EXTRACTO_ACTUAL';
+        primeraPendienteMarcada = true;
+      } else if (!primeraPendienteMarcada) {
+        estadoReal = 'EN_EXTRACTO_ACTUAL';
+        primeraPendienteMarcada = true;
+      }
+      return {
+        id: idNum(q.id),
+        numeroCuota: Number(q.numero_cuota ?? 1),
+        fechaPago: dateToMillis(q.fecha_pago),
+        fechaPagoIso: iso,
+        saldoRestante: num(q.saldo_restante),
+        interesPagado: num(q.interes_pagado),
+        aporteCapital: num(q.aporte_capital),
+        pagoTotal: num(q.pago_total),
+        estado: q.estado,
+        estadoReal,
+        periodoFacturacion: q.periodo_facturacion,
+      };
+    });
+
+    // 3. Responsables con estado de cobro en liquidación mensual
+    const responsablesInfo = (compra.responsables ?? []).map((r) => {
+      const p = r.persona_ref;
+      const esPropia = p?.linked_user_id !== null && p?.linked_user_id !== undefined && p.linked_user_id === ownerUserId;
+      const movs = r.movimientos ?? [];
+      const pagados = movs.filter((m) => (m.estado ?? '').toUpperCase() === 'PAGADO' || (m.estado ?? '').toUpperCase() === 'CONCILIADO');
+      const montoCobrado = sumDecimals(pagados.map((m) => m.monto)).toNumber();
+      let estadoCobroLiquidacion: 'COBRADO' | 'EN_LIQUIDACION' | 'PENDIENTE' | 'PROPIO' = 'PENDIENTE';
+      if (esPropia) {
+        estadoCobroLiquidacion = 'PROPIO';
+      } else if (movs.length > 0 && pagados.length === movs.length) {
+        estadoCobroLiquidacion = 'COBRADO';
+      } else if (movs.length > 0) {
+        estadoCobroLiquidacion = 'EN_LIQUIDACION';
+      }
+      return {
+        id: idNum(r.id),
+        personaId: r.persona === null ? null : idNum(r.persona),
+        nombre: p?.nombre?.trim() || (r.persona ? `Persona #${r.persona}` : 'Sin asignar'),
+        iniciales: p?.iniciales_nombre ?? null,
+        color: p?.color_representativo ?? null,
+        esPropia,
+        porcentajePago: num(r.porcentaje_pago),
+        cantidadPago: num(r.cantidad_pago),
+        cantidadCuotas: r.cantidad_cuotas ?? (compra.numero_cuotas ?? 1),
+        estadoCobroLiquidacion,
+        montoCobrado,
+      };
+    });
+
+    // 4. Notificación de correo bancario original
+    const notif = compra.notificaciones?.[0] ?? null;
+    const notificacionCorreo = notif
+      ? {
+          id: idNum(notif.id),
+          externalMessageId: notif.external_message_id,
+          remitente: notif.remitente,
+          asunto: notif.asunto,
+          fechaCorreo: notif.fecha_correo.toISOString(),
+          cuerpoExtraido: notif.cuerpo_extraido,
+          datosParseados: notif.datos_parseados,
+          estadoProcesamiento: notif.estado_procesamiento,
+          ultimos4: notif.ultimos_4,
+          comercioNormalizado: notif.comercio_normalizado,
+          montoOriginal: numOrNull(notif.monto_original),
+          moneda: notif.moneda,
+          vinculo: notif.vinculo,
+        }
+      : null;
+
+    // 5. Refinanciamiento
+    let refinanciamientoInfo: DetalleCompletoCompraCredito['refinanciamiento'] = null;
+    if (compra.es_refinanciamiento) {
+      refinanciamientoInfo = {
+        id: idNum(compra.id),
+        concepto: compra.concepto,
+        esMaestra: true,
+        maestraId: idNum(compra.id),
+        fechaCompra: compra.fecha_compra ? compra.fecha_compra.toISOString().slice(0, 10) : null,
+        saldoUnificado: num(compra.valor_compra),
+        numeroCuotas: compra.numero_cuotas ?? 1,
+        tasaMensual: num(compra.interes),
+        cuotaMensual: num(compra.pago_mensual),
+        sistemaAmortizacion: compra.sistema_amortizacion ?? 'FRANCES',
+        absorbidasCount: compra.absorbidas?.length ?? 0,
+      };
+    } else if (compra.refinanciamiento) {
+      const m = compra.refinanciamiento;
+      refinanciamientoInfo = {
+        id: idNum(m.id),
+        concepto: m.concepto,
+        esMaestra: false,
+        maestraId: idNum(m.id),
+        fechaCompra: m.fecha_compra ? m.fecha_compra.toISOString().slice(0, 10) : null,
+        saldoUnificado: num(m.valor_compra),
+        numeroCuotas: m.numero_cuotas ?? 1,
+        tasaMensual: num(m.interes),
+        cuotaMensual: num(m.pago_mensual),
+        sistemaAmortizacion: m.sistema_amortizacion ?? 'FRANCES',
+        absorbidasCount: m._count?.absorbidas ?? 0,
+      };
+    }
+
+    // 6. Recurrencia
+    const perRec = compra.periodos_pagados?.[0] ?? null;
+    const recurrencia = perRec?.plantilla
+      ? {
+          id: idNum(perRec.id),
+          plantillaId: idNum(perRec.plantilla.id),
+          nombre: perRec.plantilla.nombre,
+          frecuencia: perRec.plantilla.frecuencia,
+          montoBaseEstimado: num(perRec.plantilla.monto_base_estimado),
+          ultimoPeriodo: perRec.periodo,
+          activa: perRec.plantilla.is_active !== false,
+        }
+      : null;
+
+    // 7. Estadísticas de comercio en el año y porcentaje sobre gasto del mes en la tarjeta
+    const inferido = inferirComercioYTags(`${compra.concepto ?? ''} ${compra.descripcion ?? ''}`);
+    const comercioClave = compra.comercio_canonico || inferido.comercioCanonico || (compra.concepto?.trim() ?? 'Comercio');
+    const fechaRef = compra.fecha_compra ?? hoy;
+    const anio = fechaRef.getUTCFullYear();
+    const inicioAnio = new Date(Date.UTC(anio, 0, 1));
+    const finAnio = new Date(Date.UTC(anio, 11, 31, 23, 59, 59));
+
+    const inicioMes = new Date(Date.UTC(fechaRef.getUTCFullYear(), fechaRef.getUTCMonth(), 1));
+    const finMes = new Date(Date.UTC(fechaRef.getUTCFullYear(), fechaRef.getUTCMonth() + 1, 0, 23, 59, 59));
+
+    const [comprasAnio, comprasMesTarjeta] = await Promise.all([
+      this.prisma.comprasCredito.findMany({
+        where: {
+          owner_user_id: ownerUserId,
+          fecha_compra: { gte: inicioAnio, lte: finAnio },
+          es_refinanciamiento: false,
+        },
+        select: { id: true, concepto: true, descripcion: true, comercio_canonico: true, valor_compra: true },
+      }),
+      compra.tarjeta
+        ? this.prisma.comprasCredito.findMany({
+            where: {
+              owner_user_id: ownerUserId,
+              tarjeta: compra.tarjeta,
+              fecha_compra: { gte: inicioMes, lte: finMes },
+              es_refinanciamiento: false,
+            },
+            select: { valor_compra: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const claveNorm = normalizarComercio(comercioClave);
+    const delMismoComercio = (comprasAnio ?? []).filter((c) => {
+      if (c.comercio_canonico && c.comercio_canonico.toLowerCase() === comercioClave.toLowerCase()) return true;
+      const normC = normalizarComercio(c.comercio_canonico || c.concepto || c.descripcion || '');
+      return claveNorm.length > 0 && normC === claveNorm;
+    });
+
+    const totalHistoricoAnio = money(sumDecimals(delMismoComercio.map((c) => c.valor_compra))).toNumber();
+    const cantidadComprasAnio = Math.max(1, delMismoComercio.length);
+
+    const gastoMesDecimal = sumDecimals((comprasMesTarjeta ?? []).map((c) => c.valor_compra));
+    const valorCompraDec = toDecimal(compra.valor_compra);
+    const gastoMesFinal = gastoMesDecimal.greaterThan(0) ? gastoMesDecimal : valorCompraDec;
+    const porcentajeMes = gastoMesFinal.greaterThan(0)
+      ? Number(valorCompraDec.div(gastoMesFinal).mul(100).toDecimalPlaces(1).toString())
+      : 100;
+
+    const fechaCompraIso = compra.fecha_compra ? compra.fecha_compra.toISOString().slice(0, 10) : null;
+    const fechaEstimadaPagoExtracto =
+      cuotasInfo[0]?.fechaPagoIso ??
+      (compra.fecha_ultima_cuota ? compra.fecha_ultima_cuota.toISOString().slice(0, 10) : fechaCompraIso);
+    const totalInteresesReal = money(sumDecimals((compra.cuotas ?? []).map((q) => q.interes_pagado))).toNumber();
+
+    return {
+      compra: compraJson,
+      tarjeta: tarjetaInfo,
+      plastico: plasticoInfo,
+      cuotas: cuotasInfo,
+      responsables: responsablesInfo,
+      notificacionCorreo,
+      refinanciamiento: refinanciamientoInfo,
+      recurrencia,
+      estadisticasComercio: {
+        comercioCanonico: comercioClave,
+        totalHistoricoAnio,
+        cantidadComprasAnio,
+        gastoMesTarjeta: money(gastoMesFinal).toNumber(),
+        porcentajeSobreGastoMesTarjeta: porcentajeMes,
+      },
+      resumenPagoUnico: {
+        esUnaCuota: (compra.numero_cuotas ?? 1) === 1,
+        fechaTransaccion: fechaCompraIso,
+        fechaEstimadaPagoExtracto,
+        costoFinanciero: (compra.numero_cuotas ?? 1) === 1 ? 0 : totalInteresesReal,
+        gastoMesTarjeta: money(gastoMesFinal).toNumber(),
+        porcentajeSobreGastoMesTarjeta: porcentajeMes,
+      },
+    };
+  }
+
   // ───────────────────────────── PATCH parcial ─────────────────────────────
 
   /**
-   * `PATCH /api/compras-credito/:id`: cambia SOLO lo enviado (edición en línea del detalle). Texto, estado y plástico son
-   * una actualización simple; valor, cuotas, interés, fecha o tarjeta recalculan las cuotas (Regla 4) y no se permiten en una compra
+   * `PATCH /api/compras-credito/:id`: cambia SOLO lo enviado (edición en línea del detalle). Texto, estado, plástico, tags y comercio
+   * canónico son una actualización simple; valor, cuotas, interés, fecha o tarjeta recalculan las cuotas (Regla 4) y no se permiten en una compra
    * ya unificada en un refinanciamiento.
    */
   async patchCompra(compraId: number, dto: PatchCompraCreditoInput, ownerUserId: bigint): Promise<CompraCreditoJson> {
@@ -137,7 +540,12 @@ export class ComprasCreditoService {
       if (dto.estado !== undefined && dto.estado.trim().toUpperCase() === 'REFINANCIADA') {
         throw datosInvalidos({ estado: ['«Refinanciada» solo la asigna el asistente de unificación de deuda'] });
       }
-      const financiero = dto.valorCompra !== undefined || dto.numeroCuotas !== undefined || dto.interes !== undefined || dto.fechaCompra !== undefined || dto.tarjeta !== undefined;
+      const financiero =
+        dto.valorCompra !== undefined ||
+        dto.numeroCuotas !== undefined ||
+        dto.interes !== undefined ||
+        dto.fechaCompra !== undefined ||
+        dto.tarjeta !== undefined;
       if (financiero) {
         const fecha = existente.fecha_compra ? existente.fecha_compra.toISOString().slice(0, 10) : undefined;
         await this.updateCompraTx(
@@ -153,6 +561,8 @@ export class ComprasCreditoService {
             estado: dto.estado ?? existente.estado ?? 'Pendiente',
             tarjeta: dto.tarjeta ?? (existente.tarjeta as bigint),
             plasticoId: dto.plasticoId,
+            tags: dto.tags,
+            comercioCanonico: dto.comercioCanonico,
           },
           ownerUserId,
         );
@@ -162,6 +572,14 @@ export class ComprasCreditoService {
       if (dto.concepto !== undefined) data.concepto = dto.concepto;
       if (dto.descripcion !== undefined) data.descripcion = dto.descripcion;
       if (dto.estado !== undefined) data.estado = dto.estado;
+      if (dto.tags !== undefined) {
+        const tagsNorm = normalizarTags(dto.tags);
+        data.tags = tagsNorm;
+        await this.sincronizarCatalogoEtiquetasTx(tx, ownerUserId, tagsNorm);
+      }
+      if (dto.comercioCanonico !== undefined) {
+        data.comercio_canonico = dto.comercioCanonico ? dto.comercioCanonico.trim() : null;
+      }
       if (dto.plasticoId !== undefined) {
         if (existente.tarjeta === null) throw datosInvalidos({ plasticoId: ['La compra no tiene tarjeta'] });
         data.plastico_id = await resolverPlasticoCompra(tx, ownerUserId, existente.tarjeta, { plasticoId: dto.plasticoId, fecha: existente.fecha_compra });
@@ -214,6 +632,15 @@ export class ComprasCreditoService {
       fecha: valores.fechaCompra,
     });
 
+    const inferido = inferirComercioYTags(`${input.concepto ?? ''} ${input.descripcion ?? ''}`);
+    const tagsResueltos = input.tags !== undefined ? normalizarTags(input.tags) : normalizarTags(inferido.tags);
+    const comercioResuelto =
+      input.comercioCanonico !== undefined ? (input.comercioCanonico?.trim() || null) : inferido.comercioCanonico;
+
+    if (tagsResueltos.length > 0) {
+      await this.sincronizarCatalogoEtiquetasTx(tx, ownerUserId, tagsResueltos);
+    }
+
     const compra = await tx.comprasCredito.create({
       data: {
         plastico_id: plasticoId,
@@ -232,6 +659,8 @@ export class ComprasCreditoService {
         valor_moneda_original: toDbMoney(valores.valorOriginal),
         tasa_cambio_aplicada: toDbRate(valores.tasa),
         trm_confirmada: valores.trmConfirmada,
+        ...(input.tags !== undefined || tagsResueltos.length > 0 ? { tags: tagsResueltos } : {}),
+        ...(input.comercioCanonico !== undefined || comercioResuelto !== null ? { comercio_canonico: comercioResuelto } : {}),
       },
     });
 
@@ -284,6 +713,12 @@ export class ComprasCreditoService {
       ? await resolverPlasticoCompra(tx, ownerUserId, tarjeta.id, { plasticoId: input.plasticoId, fecha: valores.fechaCompra })
       : existente.plastico_id;
 
+    let tagsActualizar: string[] | undefined;
+    if (input.tags !== undefined) {
+      tagsActualizar = normalizarTags(input.tags);
+      await this.sincronizarCatalogoEtiquetasTx(tx, ownerUserId, tagsActualizar);
+    }
+
     const actualizada = await tx.comprasCredito.update({
       where: { id: existente.id },
       data: {
@@ -300,6 +735,8 @@ export class ComprasCreditoService {
         valor_moneda_original: toDbMoney(valores.valorOriginal),
         tasa_cambio_aplicada: toDbRate(valores.tasa),
         trm_confirmada: valores.trmConfirmada,
+        ...(tagsActualizar !== undefined ? { tags: tagsActualizar } : {}),
+        ...(input.comercioCanonico !== undefined ? { comercio_canonico: input.comercioCanonico?.trim() || null } : {}),
       },
     });
     return this.recalcularTx(tx, actualizada);
@@ -551,6 +988,23 @@ export class ComprasCreditoService {
   }
 
   // ───────────────────────────── helpers ─────────────────────────────
+
+  private async sincronizarCatalogoEtiquetasTx(tx: Tx, ownerUserId: bigint, slugs: string[]): Promise<void> {
+    if (!tx.etiquetas || typeof tx.etiquetas.upsert !== 'function') return;
+    for (const slug of slugs) {
+      await tx.etiquetas.upsert({
+        where: { owner_user_id_slug: { owner_user_id: ownerUserId, slug } },
+        create: {
+          owner_user_id: ownerUserId,
+          slug,
+          nombre: nombreLegibleTag(slug),
+          color: colorSugeridoTag(slug),
+          tipo_agrupacion: 'HABITO',
+        },
+        update: {},
+      });
+    }
+  }
 
   async requireCompra(tx: Tx, compraId: number, ownerUserId: bigint): Promise<ComprasCredito> {
     const compra = await tx.comprasCredito.findFirst({ where: { id: BigInt(compraId), owner_user_id: ownerUserId } });

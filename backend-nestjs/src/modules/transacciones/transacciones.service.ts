@@ -5,6 +5,8 @@ import { money, rate, toDbMoney, toDbRate, toDecimal } from '../../common/utils/
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import { assertCategoria, assertCuenta, assertTarjeta } from '../../common/utils/ownership.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { colorSugeridoTag, nombreLegibleTag } from '../lookup/lookup.service';
+import { inferirComercioYTags, normalizarTagSlug, normalizarTags } from '../notificaciones-correo/comercio.util';
 import {
   CrearTransferenciaInternaDto,
   CreateTransaccionDto,
@@ -33,6 +35,8 @@ export interface DatosTransaccion {
   esTransferenciaInterna?: boolean;
   cuentaContraparteId?: number | null;
   transaccionEspejoId?: number | null;
+  tags?: string[];
+  comercioCanonico?: string | null;
 }
 
 export interface ResultadoTransferenciaPropia {
@@ -53,6 +57,7 @@ export class TransaccionesService {
     const tipo = filtro.tipo ?? filtro.tipo_transaccion;
     const cuentaId = filtro.cuentaId ?? filtro.cuenta_id;
     const categoriaId = filtro.categoriaId ?? filtro.categoria_id;
+    const tagNorm = filtro.tag ? normalizarTagSlug(filtro.tag) : '';
     const rango = filtro.periodo ? this.rangoDelPeriodo(filtro.periodo) : { desde: filtro.desde, hasta: filtro.hasta };
     const where: Prisma.TransaccionesWhereInput = {
       owner_user_id: ownerUserId,
@@ -60,6 +65,7 @@ export class TransaccionesService {
       ...(filtro.estado ? { estado: filtro.estado } : {}),
       ...(filtro.origen_registro ? { origen_registro: filtro.origen_registro } : {}),
       ...(filtro.esTransferenciaInterna !== undefined ? { es_transferencia_interna: filtro.esTransferenciaInterna } : {}),
+      ...(tagNorm ? { tags: { has: tagNorm } } : {}),
       ...(categoriaId ? { categoria_id: BigInt(categoriaId) } : {}),
       ...(cuentaId ? { OR: [{ cuenta_origen_id: BigInt(cuentaId) }, { cuenta_destino_id: BigInt(cuentaId) }] } : {}),
       ...(rango.desde || rango.hasta
@@ -112,6 +118,8 @@ export class TransaccionesService {
       notas: dto.notas ?? null,
       esTransferenciaInterna: dto.esTransferenciaInterna ?? dto.tipoTransaccion === TipoTransaccion.TRANSFERENCIA,
       cuentaContraparteId: dto.cuentaContraparteId ?? null,
+      tags: dto.tags,
+      comercioCanonico: dto.comercioCanonico,
     };
     return this.prisma.$transaction((tx) => this.insertar(tx, datos, ownerUserId));
   }
@@ -164,6 +172,7 @@ export class TransaccionesService {
           notas: dto.notas ?? null,
           esTransferenciaInterna: true,
           cuentaContraparteId: dto.cuentaDestinoId,
+          tags: dto.tags,
         },
         ownerUserId,
       );
@@ -187,6 +196,7 @@ export class TransaccionesService {
           esTransferenciaInterna: true,
           cuentaContraparteId: dto.cuentaOrigenId,
           transaccionEspejoId: Number(salidaInicial.id),
+          tags: dto.tags,
         },
         ownerUserId,
       );
@@ -233,6 +243,16 @@ export class TransaccionesService {
   ): Promise<Transacciones> {
     await this.validarYResolverReferencias(tx, datos, ownerUserId, opciones);
     const { montoOriginal, tasa, montoCop } = this.resolverMontos(datos);
+
+    const inferido = inferirComercioYTags(`${datos.concepto ?? ''} ${datos.notas ?? ''}`);
+    const tagsResueltos = datos.tags !== undefined ? normalizarTags(datos.tags) : normalizarTags(inferido.tags);
+    const comercioResuelto =
+      datos.comercioCanonico !== undefined ? (datos.comercioCanonico?.trim() || null) : inferido.comercioCanonico;
+
+    if (tagsResueltos.length > 0) {
+      await this.sincronizarCatalogoEtiquetasTx(tx, ownerUserId, tagsResueltos);
+    }
+
     return tx.transacciones.create({
       data: {
         owner_user_id: ownerUserId,
@@ -259,6 +279,8 @@ export class TransaccionesService {
           datos.transaccionEspejoId === undefined || datos.transaccionEspejoId === null
             ? null
             : BigInt(datos.transaccionEspejoId),
+        ...(datos.tags !== undefined || tagsResueltos.length > 0 ? { tags: tagsResueltos } : {}),
+        ...(datos.comercioCanonico !== undefined || comercioResuelto !== null ? { comercio_canonico: comercioResuelto } : {}),
       },
     });
   }
@@ -291,6 +313,12 @@ export class TransaccionesService {
       await this.validarYResolverReferencias(tx, fusion, ownerUserId);
       const { montoOriginal, tasa, montoCop } = this.resolverMontos(fusion);
 
+      let tagsActualizar: string[] | undefined;
+      if (dto.tags !== undefined) {
+        tagsActualizar = normalizarTags(dto.tags);
+        await this.sincronizarCatalogoEtiquetasTx(tx, ownerUserId, tagsActualizar);
+      }
+
       const actualizada = await tx.transacciones.update({
         where: { id: actual.id },
         data: {
@@ -306,6 +334,8 @@ export class TransaccionesService {
           monto_cop: toDbMoney(montoCop),
           estado: fusion.estado,
           notas: fusion.notas,
+          ...(tagsActualizar !== undefined ? { tags: tagsActualizar } : {}),
+          ...(dto.comercioCanonico !== undefined ? { comercio_canonico: dto.comercioCanonico?.trim() || null } : {}),
         },
       });
 
@@ -325,6 +355,8 @@ export class TransaccionesService {
               monto_cop: toDbMoney(montoCop),
               estado: fusion.estado,
               notas: fusion.notas,
+              ...(tagsActualizar !== undefined ? { tags: tagsActualizar } : {}),
+              ...(dto.comercioCanonico !== undefined ? { comercio_canonico: dto.comercioCanonico?.trim() || null } : {}),
             },
           });
         }
@@ -354,6 +386,23 @@ export class TransaccionesService {
   }
 
   // ───────────────────────────── helpers ─────────────────────────────
+
+  private async sincronizarCatalogoEtiquetasTx(tx: Tx, ownerUserId: bigint, slugs: string[]): Promise<void> {
+    if (!tx.etiquetas || typeof tx.etiquetas.upsert !== 'function') return;
+    for (const slug of slugs) {
+      await tx.etiquetas.upsert({
+        where: { owner_user_id_slug: { owner_user_id: ownerUserId, slug } },
+        create: {
+          owner_user_id: ownerUserId,
+          slug,
+          nombre: nombreLegibleTag(slug),
+          color: colorSugeridoTag(slug),
+          tipo_agrupacion: 'HABITO',
+        },
+        update: {},
+      });
+    }
+  }
 
   private async validarYResolverReferencias(
     tx: Tx,
