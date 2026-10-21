@@ -4,9 +4,14 @@
  * Funciones puras: sin BD ni Nest. Los patrones ignoran tildes, mayúsculas y espacios repetidos.
  */
 
-import { detectarPatronRechazo, normalizarTextoCorreoMulticapa } from './clasificador-correo.util';
+import { detectarPatronRechazo } from './clasificador-correo.util';
 
-const plano = (t: string): string => normalizarTextoCorreoMulticapa(t);
+const plano = (t: string): string =>
+  t
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 export interface TransferenciaRecibida {
   contraparte: string | null;

@@ -106,6 +106,15 @@ export class NotificacionesCorreoController {
     return this.reproceso.reprocesar(dto, userId);
   }
 
+  @Post('reprocesar-lote')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Motor Bulk (Iteración 2 — Fase 2): reprocesa todos los correos pendientes en sub-lotes transaccionales con contexto en memoria',
+  })
+  reprocesarEnLote(@Body() dto: ReprocesarDto, @CurrentUser('userId') userId: bigint) {
+    return this.reproceso.reprocesarPendientesEnLote({ ...dto, simular: dto?.simular ?? false }, userId);
+  }
+
   @Get('auditoria-rechazados')
   @ApiOperation({
     summary: 'Auditoría en seco de correos rechazados históricos y sus registros asociados (ComprasCredito, CuotasDetalle, Responsables, Sub-ledger, Transacciones)',

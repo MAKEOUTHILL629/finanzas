@@ -6,6 +6,7 @@ import {
   normalizarTextoCorreoMulticapa,
 } from '../src/modules/notificaciones-correo/clasificador-correo.util';
 import { AuditoriaCorreosService } from '../src/modules/notificaciones-correo/auditoria-correos.service';
+import { ReprocesoCorreosService } from '../src/modules/notificaciones-correo/reproceso-correos.service';
 import { decidirRuta } from '../src/modules/notificaciones-correo/bancolombia-normalizer.util';
 import { interpretarCuerpo } from '../src/modules/notificaciones-correo/cuerpo-correo.util';
 import { ItemNormalizado, planificar } from '../src/modules/notificaciones-correo/planificador-correos';
@@ -226,5 +227,80 @@ describe('Fase 1 — resolución en cascada', () => {
     const plan = planificar(item({ origenRaw: 'T.Cred *0000', hora: '23:30:00' }), snap({ compras: [compra] }));
     expect(plan.accion).toMatchObject({ tipo: 'VINCULAR_COMPRA', compraId: 77n });
     expect(plan.analisis.confianzaResolucion).toBe('VENTANA_36H');
+  });
+});
+
+describe('Fase 2 — ReprocesoCorreosService motor bulk por lotes', () => {
+  it('procesa un lote de correos pendientes en sub-lotes transaccionales con contexto precargado', async () => {
+    const pendientes = [
+      {
+        id: 1n,
+        owner_user_id: 1n,
+        external_message_id: '<m1>',
+        asunto: 'Transferencia exitosa',
+        cuerpo_extraido: 'Transferiste $50,000.00 desde tu cuenta *3698 a JUAN SANCHEZ',
+        fecha_correo: new Date('2026-10-14T14:00:00Z'),
+        monto_original: d(50000),
+        moneda: 'COP',
+        ultimos_4: '3698',
+        estado_procesamiento: 'PENDIENTE',
+        compra_credito_generada_id: null,
+        transaccion_generada_id: null,
+        datos_parseados: {
+          fecha: '2026-10-14',
+          hora: '09:00:00',
+          tipo: 'Transferencia',
+          metodo: 'Cuenta Ahorros/Corriente',
+          comercio: 'JUAN SANCHEZ',
+          origenRaw: 'Cuenta *3698',
+          valor: '50000',
+          moneda: 'COP',
+        },
+      },
+      {
+        id: 2n,
+        owner_user_id: 1n,
+        external_message_id: '<m2>',
+        asunto: 'Compra rechazada',
+        cuerpo_extraido: 'Tu compra en EXITO no fue exitosa por fondos insuficientes',
+        fecha_correo: new Date('2026-10-14T15:00:00Z'),
+        monto_original: d(80000),
+        moneda: 'COP',
+        ultimos_4: '9491',
+        estado_procesamiento: 'PENDIENTE',
+        compra_credito_generada_id: null,
+        transaccion_generada_id: null,
+        datos_parseados: {}, // ejercita itemDeConFallback
+      },
+    ];
+
+    const prismaMock: Record<string, any> = {
+      notificacionesCorreo: {
+        findMany: jest.fn().mockResolvedValue(pendientes),
+      },
+      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>): Promise<unknown> => fn(prismaMock)),
+    };
+
+    const ejecutorMock = {
+      cargarSnapshot: jest.fn().mockResolvedValue(snap()),
+      aplicar: jest.fn().mockImplementation(async (_tx: unknown, p: { plan: { accion: { tipo: string } } }) => ({
+        compraId: p.plan.accion.tipo === 'CREAR_COMPRA' ? 500n : null,
+        transaccionId: p.plan.accion.tipo === 'CREAR_TRANSACCION' ? 700n : null,
+      })),
+    };
+
+    const productosMock = {
+      inferirTarjetas: jest.fn().mockResolvedValue([]),
+    };
+
+    const service = new ReprocesoCorreosService(prismaMock as never, ejecutorMock as never, productosMock as never);
+    const res = await service.reprocesarPendientesEnLote({ simular: false, chunkSize: 50 }, 1n);
+
+    expect(res.totalEvaluados).toBe(2);
+    expect(res.conciliados).toBe(1);
+    expect(res.descartadosRechazados).toBe(1);
+    expect(res.transaccionesCreadas).toBe(1);
+    expect(prismaMock.$transaction).toHaveBeenCalledTimes(1); // 1 sola transacción para el sub-lote de 2 correos
+    expect(ejecutorMock.cargarSnapshot).toHaveBeenCalledTimes(1); // contexto precargado una sola vez
   });
 });

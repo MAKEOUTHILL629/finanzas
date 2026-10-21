@@ -12,7 +12,9 @@ import {
   IsPositive,
   IsString,
   Matches,
+  Max,
   MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { TipoCuentaFinanciera } from '../../../common/enums/finance.enums';
@@ -107,6 +109,7 @@ export class ReprocesarDto {
       'Fecha de corte (yyyy-MM-dd): los correos de esa fecha en adelante se registran como compras/transacciones nuevas; ' +
       'los anteriores solo se enlazan con lo que ya existe y, si no hay equivalente, quedan pendientes.',
   })
+  @VacioAUndefined()
   @IsOptional()
   @IsDateString({ strict: true })
   desde?: string;
@@ -119,7 +122,7 @@ export class ReprocesarDto {
   @ApiPropertyOptional({ type: [Number], description: 'Reprocesar solo estos correos' })
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(2000)
+  @ArrayMaxSize(5000)
   @IsInt({ each: true })
   ids?: number[];
 
@@ -128,4 +131,17 @@ export class ReprocesarDto {
   @IsArray()
   @IsString({ each: true })
   motivos?: string[];
+
+  @ApiPropertyOptional({ default: false, description: 'Si es true, incluye también correos en estado ERROR además de PENDIENTE' })
+  @IsOptional()
+  @IsBoolean()
+  incluirConError?: boolean;
+
+  @ApiPropertyOptional({ default: 50, description: 'Tamaño del sub-lote transaccional (entre 10 y 100)' })
+  @EnteroOpcional()
+  @IsOptional()
+  @IsInt()
+  @Min(10)
+  @Max(100)
+  chunkSize?: number;
 }
