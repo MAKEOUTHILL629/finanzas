@@ -354,6 +354,7 @@ model CuentasFinancieras {
   transacciones_destino Transacciones[]         @relation("TxCuentaDestino")
   plantillas_debito     PlantillasRecurrentes[]
   aportes_detalle       AportesDetalle[]
+  aportes_destino       AportesDetalle[]        @relation("AporteCuentaDestino")
   notificaciones        NotificacionesCorreo[]
   reportes_pago         ReportesPagoPersona[]
   metodos_pago          MetodosPagoUsuario[]
@@ -662,11 +663,16 @@ model AportesDetalle {
   transaccion_id             BigInt?
   /// Periodo del que viene el saldo a favor cuando metodo = SALDO_A_FAVOR.
   origen_obligacion_mes_id   BigInt?
+  /// Clasificación binaria Fase 6 (sql/019): EFECTIVO | TRANSFERENCIA.
+  medio_pago                 String    @default("EFECTIVO") @db.VarChar(25)
+  /// Cuenta donde entró el dinero cuando el aporte fue por transferencia (sql/019).
+  cuenta_destino_id          BigInt?
 
   aporte_dia     AportesDia          @relation(fields: [aporte_dia_id], references: [id])
   persona        Personas            @relation(fields: [persona_id], references: [id])
   prestamo_cruce Prestamos?          @relation("AporteCruceGenerado", fields: [prestamo_cruce_generado_id], references: [id])
   cuenta         CuentasFinancieras? @relation(fields: [cuenta_financiera_id], references: [id])
+  cuenta_destino CuentasFinancieras? @relation("AporteCuentaDestino", fields: [cuenta_destino_id], references: [id], onDelete: SetNull)
   transaccion    Transacciones?      @relation(fields: [transaccion_id], references: [id])
   origen_saldo   ObligacionesMes?    @relation("AporteOrigenSaldoFavor", fields: [origen_obligacion_mes_id], references: [id])
 

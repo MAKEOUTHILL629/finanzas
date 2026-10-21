@@ -50,6 +50,23 @@ export class DetalleAporteDiarioDto {
   @IsPositive()
   cuentaFinancieraId?: number;
 
+  @ApiPropertyOptional({ enum: ['EFECTIVO', 'TRANSFERENCIA'], description: 'Fase 6: clasificación binaria del aporte; por defecto se deriva del método' })
+  @IsOptional()
+  @IsIn(['EFECTIVO', 'TRANSFERENCIA'])
+  medioPago?: 'EFECTIVO' | 'TRANSFERENCIA';
+
+  @ApiPropertyOptional({ description: 'Fase 6 · TRANSFERENCIA: cuenta destino cuando difiere de cuentaFinancieraId' })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  cuentaDestinoId?: number;
+
+  @ApiPropertyOptional({ description: 'Fase 6 · TRANSFERENCIA: transacción bancaria entrante existente a asociar (no se crea otra)' })
+  @IsOptional()
+  @IsInt()
+  @IsPositive()
+  transaccionId?: number;
+
   @ApiPropertyOptional({ example: 'Andrés le debía a mi papá lo de un arreglo' })
   @IsOptional()
   @IsString()

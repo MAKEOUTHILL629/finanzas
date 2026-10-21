@@ -7,6 +7,21 @@ import { ActualizarAporteDiarioDto, AplicarExcedenteDto, CrearAporteDiarioDto, G
 /** Aportes diarios del carro, cruces de cuentas y saldo a favor (también disponibles bajo `/api/v2/obligaciones-aportes/*`). */
 @ApiTags('Aportes del carro')
 @ApiBearerAuth()
+@Controller('api/aportes-carro')
+export class AportesCarroTransferenciasController {
+  constructor(private readonly aportes: AportesCarroService) {}
+
+  @Get('transferencias-sugeridas')
+  @ApiQuery({ name: 'monto', required: false, example: '350000' })
+  @ApiQuery({ name: 'fecha', required: false, example: '2026-09-07' })
+  @ApiOperation({ summary: 'Fase 6: transferencias entrantes sin vincular, ordenadas por cercanía de monto y fecha' })
+  transferenciasSugeridas(@Query('monto') monto: string | undefined, @Query('fecha') fecha: string | undefined, @CurrentUser('userId') userId: bigint) {
+    return this.aportes.transferenciasSugeridas(userId, { monto, fecha });
+  }
+}
+
+@ApiTags('Aportes del carro')
+@ApiBearerAuth()
 @Controller('api/obligaciones-aportes')
 export class AportesCarroController {
   constructor(private readonly aportes: AportesCarroService) {}

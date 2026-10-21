@@ -18,7 +18,8 @@ import { addMesesPeriodo, nombrePeriodo, primerDiaPeriodo, ultimoDiaPeriodo } fr
 import { Decimal } from '../../config/decimal.config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TransaccionesService } from '../transacciones/transacciones.service';
-import { calcularEstadoPeriodo, clasificarMetodo, MetodoCanonico } from './aportes-carro.calc';
+import { calcularEstadoPeriodo, clasificarMetodo, MetodoCanonico, resumenMediosPago } from './aportes-carro.calc';
+import { normalizarTags } from '../notificaciones-correo/comercio.util';
 import {
   ActualizarAporteDiarioDto,
   AplicarExcedenteDto,
@@ -151,6 +152,40 @@ export class AportesCarroService {
         saldoFaltanteMes: periodo.saldoPendiente,
       },
     };
+  }
+
+  /**
+   * Fase 6: transferencias de INGRESO recientes aún no vinculadas a un aporte del carro,
+   * ordenadas por cercanía de monto y fecha a las pedidas (para asociarlas en 1 clic).
+   */
+  async transferenciasSugeridas(ownerUserId: bigint, opciones: { monto?: number | string; fecha?: string } = {}) {
+    const [ingresos, vinculados] = await Promise.all([
+      this.prisma.transacciones.findMany({
+        where: { owner_user_id: ownerUserId, tipo_transaccion: TipoTransaccion.INGRESO },
+        include: { cuenta_destino: { select: { id: true, nombre: true } } },
+        orderBy: [{ fecha_transaccion: 'desc' }, { id: 'desc' }],
+        take: 200,
+      }),
+      this.prisma.aportesDetalle.findMany({ where: { transaccion_id: { not: null } }, select: { transaccion_id: true } }),
+    ]);
+    const usados = new Set(vinculados.map((v) => String(v.transaccion_id)));
+    const montoPedido = opciones.monto === undefined ? null : toDecimal(opciones.monto);
+    const fechaPedido = opciones.fecha ? parseIsoDate(opciones.fecha) : null;
+    return ingresos
+      .filter((t) => t.estado !== EstadoTransaccion.ANULADO && !usados.has(String(t.id)))
+      .map((t) => ({
+        id: Number(t.id),
+        fecha: t.fecha_transaccion.toISOString().slice(0, 10),
+        concepto: t.concepto,
+        monto: money(toDecimal(t.monto_cop)),
+        cuentaDestinoId: t.cuenta_destino_id ? Number(t.cuenta_destino_id) : null,
+        cuentaNombre: t.cuenta_destino?.nombre ?? null,
+        diferenciaMonto: montoPedido ? money(toDecimal(t.monto_cop).minus(montoPedido).abs()) : null,
+        diferenciaDias: fechaPedido ? Math.abs(Math.round((t.fecha_transaccion.getTime() - fechaPedido.getTime()) / 86_400_000)) : null,
+      }))
+      .sort((a, b) => Number(a.diferenciaMonto ?? 0) - Number(b.diferenciaMonto ?? 0) || (a.diferenciaDias ?? 0) - (b.diferenciaDias ?? 0))
+      .slice(0, 10)
+      .map(({ diferenciaMonto, diferenciaDias, ...resto }) => ({ ...resto, diferenciaMonto, diferenciaDias }));
   }
 
   // ───────────────────────────── Periodos ─────────────────────────────
@@ -372,7 +407,26 @@ export class AportesCarroService {
     if (d.cuentaFinancieraId !== undefined && clase !== 'EFECTIVO' && clase !== 'TRANSFERENCIA') {
       throw datosInvalidos({ cuentaFinancieraId: ['La cuenta solo aplica a los aportes en efectivo o por transferencia'] });
     }
+    if ((d.cuentaDestinoId !== undefined || d.transaccionId !== undefined) && clase !== 'TRANSFERENCIA' && d.medioPago !== 'TRANSFERENCIA') {
+      throw datosInvalidos({ transaccionId: ['La cuenta destino y la transferencia asociada solo aplican a aportes por TRANSFERENCIA'] });
+    }
     const cuenta = await this.resolverCuenta(tx, clase, d, ownerUserId);
+    const medioPago = d.medioPago ?? (clase === 'TRANSFERENCIA' ? 'TRANSFERENCIA' : 'EFECTIVO');
+
+    // Fase 6 · Modo 1: asociar una transferencia bancaria entrante ya existente (sin crear otro movimiento).
+    let transaccionExistenteId: bigint | null = null;
+    if (d.transaccionId !== undefined) {
+      const existente = await tx.transacciones.findFirst({ where: { id: BigInt(d.transaccionId), owner_user_id: ownerUserId } });
+      if (!existente) throw new NotFoundException(`Transacción ${d.transaccionId} no encontrada`);
+      if (existente.estado === EstadoTransaccion.ANULADO) throw datosInvalidos({ transaccionId: ['La transacción está anulada'] });
+      const yaVinculada = await tx.aportesDetalle.findFirst({ where: { transaccion_id: existente.id } });
+      if (yaVinculada) throw new ConflictException(`La transacción ${d.transaccionId} ya está vinculada a otro aporte del carro`);
+      transaccionExistenteId = existente.id;
+      await tx.transacciones.update({
+        where: { id: existente.id },
+        data: { tags: normalizarTags([...(existente.tags ?? []), '#aporte-carro']) },
+      });
+    }
 
     // El Trigger 3 (BEFORE INSERT) completa `prestamo_cruce_generado_id` si la persona es un tercero.
     const detalle = await tx.aportesDetalle.create({
@@ -384,10 +438,13 @@ export class AportesCarroService {
         comentarios: d.comentarios ?? null,
         cuenta_financiera_id: cuenta?.id ?? null,
         origen_obligacion_mes_id: origenId,
+        medio_pago: medioPago,
+        cuenta_destino_id: cuenta?.id ?? null,
+        transaccion_id: transaccionExistenteId,
       },
     });
 
-    if (cuenta && (clase === 'EFECTIVO' || clase === 'TRANSFERENCIA')) {
+    if (!transaccionExistenteId && cuenta && (clase === 'EFECTIVO' || clase === 'TRANSFERENCIA')) {
       const ingreso = await this.transacciones.insertar(
         tx,
         {
@@ -403,6 +460,7 @@ export class AportesCarroService {
           origenRegistro: OrigenRegistro.MANUAL,
           estado: EstadoTransaccion.CONFIRMADO,
           notas: `Aporte diario ${ctx.dia.id}`,
+          tags: ['#aporte-carro'],
         },
         ownerUserId,
       );
@@ -439,6 +497,7 @@ export class AportesCarroService {
   /** Cuenta indicada (validada) o, para EFECTIVO, la primera cuenta activa de tipo EFECTIVO. */
   private async resolverCuenta(tx: Tx, clase: MetodoCanonico, d: DetalleAporteDiarioDto, ownerUserId: bigint) {
     if (clase !== 'EFECTIVO' && clase !== 'TRANSFERENCIA') return null;
+    if (d.cuentaDestinoId !== undefined) return assertCuenta(tx, d.cuentaDestinoId, ownerUserId);
     if (d.cuentaFinancieraId !== undefined) return assertCuenta(tx, d.cuentaFinancieraId, ownerUserId);
     if (clase !== 'EFECTIVO') return null;
     return tx.cuentasFinancieras.findFirst({
@@ -632,6 +691,9 @@ export class AportesCarroService {
       comentarios: d.comentarios,
       cuentaFinancieraId: d.cuenta_financiera_id,
       cuentaNombre: d.cuenta?.nombre ?? null,
+      /** Fase 6: clasificación binaria y cuenta destino (sql/019). */
+      medioPago: d.medio_pago ?? (clase === 'TRANSFERENCIA' ? 'TRANSFERENCIA' : 'EFECTIVO'),
+      cuentaDestinoId: d.cuenta_destino_id ?? d.cuenta_financiera_id,
       transaccionId: d.transaccion_id,
       prestamoCruceGeneradoId: d.prestamo_cruce_generado_id,
       esCruce: d.prestamo_cruce_generado_id !== null || clase === 'CRUCE_CUENTAS',
@@ -666,6 +728,8 @@ export class AportesCarroService {
       estadoCalculado: estado.montoAbonado.greaterThanOrEqualTo(estado.valorCuotaObjetivo) ? 'COMPLETADO' : 'ABIERTO',
       aportadoPorCruces: sumar(vistos.filter((d) => d.esCruce)),
       aportadoDirecto: sumar(vistos.filter((d) => !d.esCruce)),
+      /** Fase 6: efectivo físico vs. transferencia en cuenta, y desglose por aportante. */
+      ...resumenMediosPago(vistos),
       cantidadAportes: p.dias.length,
       aportes: conAportes ? p.dias.map((dia) => this.vistaDia(dia, p.periodo)) : [],
     };

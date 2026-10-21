@@ -28,6 +28,74 @@ export function clasificarMetodo(metodo: string): MetodoCanonico {
   return 'OTRO';
 }
 
+export interface DetalleMedioPago {
+  valor: ValorEntrada;
+  /** Clasificación binaria Fase 6 (sql/019); si falta se deriva del método canónico. */
+  medioPago?: string | null;
+  metodoCanonico?: MetodoCanonico;
+  metodo?: string;
+  personaId?: bigint | number | null;
+  personaNombre?: string | null;
+}
+
+export interface ResumenMediosPago {
+  /** Suma exacta de los aportes en efectivo físico del periodo. */
+  totalAportesEfectivo: Decimal;
+  /** Suma exacta de los aportes que entraron por transferencia a una cuenta. */
+  totalAportesTransferencia: Decimal;
+  /** Cuántas transferencias están vinculadas a una transacción bancaria (conciliadas). */
+  transferenciasConciliadas: number;
+  resumenPorPersona: Array<{
+    personaId: number | null;
+    nombre: string | null;
+    aportadoEfectivo: Decimal;
+    aportadoTransferencia: Decimal;
+    total: Decimal;
+  }>;
+}
+
+/** Desglose Fase 6: cuánto del recaudo es efectivo físico y cuánto entró por transferencia, en total y por aportante. */
+export function resumenMediosPago(detalles: ReadonlyArray<DetalleMedioPago & { transaccionId?: bigint | number | null }>): ResumenMediosPago {
+  let efectivo = new Decimal(0);
+  let transferencia = new Decimal(0);
+  let conciliadas = 0;
+  const porPersona = new Map<string, { personaId: number | null; nombre: string | null; efectivo: Decimal; transferencia: Decimal }>();
+  for (const d of detalles) {
+    const medio = d.medioPago ?? (d.metodoCanonico ?? (d.metodo ? clasificarMetodo(d.metodo) : 'EFECTIVO'));
+    if (medio !== 'EFECTIVO' && medio !== 'TRANSFERENCIA') continue;
+    const valor = toDecimal(d.valor);
+    if (medio === 'EFECTIVO') efectivo = efectivo.plus(valor);
+    else {
+      transferencia = transferencia.plus(valor);
+      if (d.transaccionId !== null && d.transaccionId !== undefined) conciliadas++;
+    }
+    const clave = String(d.personaId ?? d.personaNombre ?? '—');
+    const fila = porPersona.get(clave) ?? {
+      personaId: d.personaId === null || d.personaId === undefined ? null : Number(d.personaId),
+      nombre: d.personaNombre ?? null,
+      efectivo: new Decimal(0),
+      transferencia: new Decimal(0),
+    };
+    if (medio === 'EFECTIVO') fila.efectivo = fila.efectivo.plus(valor);
+    else fila.transferencia = fila.transferencia.plus(valor);
+    porPersona.set(clave, fila);
+  }
+  return {
+    totalAportesEfectivo: money(efectivo),
+    totalAportesTransferencia: money(transferencia),
+    transferenciasConciliadas: conciliadas,
+    resumenPorPersona: [...porPersona.values()]
+      .map((f) => ({
+        personaId: f.personaId,
+        nombre: f.nombre,
+        aportadoEfectivo: money(f.efectivo),
+        aportadoTransferencia: money(f.transferencia),
+        total: money(f.efectivo.plus(f.transferencia)),
+      }))
+      .sort((a, b) => b.total.comparedTo(a.total)),
+  };
+}
+
 export interface EstadoPeriodoCalculado {
   valorCuotaObjetivo: Decimal;
   montoAbonado: Decimal;

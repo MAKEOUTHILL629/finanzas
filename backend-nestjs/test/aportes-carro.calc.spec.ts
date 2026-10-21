@@ -1,8 +1,35 @@
 import { EstadoPeriodoAporte, MetodoAporte } from '../src/common/enums/finance.enums';
 import { addMesesPeriodo, mesesEntre, nombrePeriodo, primerDiaPeriodo, ultimoDiaPeriodo } from '../src/common/utils/periodo.util';
 import { categoriaDeMovimiento, origenDeMovimiento } from '../src/modules/liquidacion-mensual/liquidacion-mensual.service';
-import { calcularEstadoPeriodo, clasificarMetodo } from '../src/modules/obligaciones-aportes/aportes-carro.calc';
+import { calcularEstadoPeriodo, clasificarMetodo, resumenMediosPago } from '../src/modules/obligaciones-aportes/aportes-carro.calc';
 import { calcularMesFin } from '../src/modules/recurrentes-persona/recurrentes-persona.service';
+
+describe('resumenMediosPago (Iteración 3 · Fase 6: efectivo vs. transferencia)', () => {
+  it('separa efectivo físico de transferencia, cuenta las conciliadas y desglosa por aportante', () => {
+    const r = resumenMediosPago([
+      { valor: '200000', medioPago: 'EFECTIVO', personaId: 1n, personaNombre: 'Papá', transaccionId: null },
+      { valor: '150000.50', medioPago: 'TRANSFERENCIA', personaId: 1n, personaNombre: 'Papá', transaccionId: 77n },
+      { valor: '100000', medioPago: 'TRANSFERENCIA', personaId: 2n, personaNombre: 'Hijo', transaccionId: null },
+      { valor: '50000', metodo: 'CRUCE_CUENTAS', personaId: 2n, personaNombre: 'Hijo', transaccionId: null },
+    ]);
+    expect(r.totalAportesEfectivo.toString()).toBe('200000');
+    expect(r.totalAportesTransferencia.toString()).toBe('250000.5');
+    expect(r.transferenciasConciliadas).toBe(1);
+    expect(r.resumenPorPersona.map((p) => [p.nombre, p.aportadoEfectivo.toString(), p.aportadoTransferencia.toString()])).toEqual([
+      ['Papá', '200000', '150000.5'],
+      ['Hijo', '0', '100000'],
+    ]);
+  });
+
+  it('sin medioPago deriva del método heredado (Nequi/Bancolombia = transferencia, Fisico = efectivo)', () => {
+    const r = resumenMediosPago([
+      { valor: 100, metodo: 'Nequi', personaNombre: 'A' },
+      { valor: 50, metodo: 'Fisico', personaNombre: 'A' },
+    ]);
+    expect(r.totalAportesTransferencia.toString()).toBe('100');
+    expect(r.totalAportesEfectivo.toString()).toBe('50');
+  });
+});
 
 describe('calcularEstadoPeriodo (sección 3.1 de la especificación)', () => {
   it('sin aportes → PENDIENTE: debe toda la cuota', () => {
