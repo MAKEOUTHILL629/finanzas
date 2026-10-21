@@ -67,6 +67,7 @@ export interface Analisis {
   tipoIntencion: TipoIntencionCorreo;
   tipoEvento: 'PAGO_TARJETA' | 'COMPRA_TC' | 'RECHAZADO' | 'OTRO';
   esCompraValida: boolean;
+  patronRechazo?: string | null;
   huella: string;
   confianzaResolucion: ConfianzaResolucion | null;
 }
@@ -144,14 +145,16 @@ export function analizar(item: ItemNormalizado, snap: SnapshotCorreos): Analisis
   const moneda = item.moneda === 'USD' ? 'USD' : 'COP';
   const ultimos4 = extraerUltimos4(item.origenRaw) ?? cuerpo.ultimos4;
   const instrumento = detectarInstrumento(item.origenRaw, item.metodo);
-  const ruta = decidirRuta({ ...item, tipo: item.tipo, metodo: item.metodo }, cuerpo);
-  const clasificacion = clasificarIntencionCorreo([item.asunto, item.comercio, item.cuerpoExtraido]);
-  // El cuerpo manda sobre el rótulo: rechazada/pago detectados en el texto pisan la clasificación por asunto.
-  const tipoIntencion: TipoIntencionCorreo = cuerpo.rechazada
+  const clasificacion = clasificarIntencionCorreo([item.asunto, item.comercio, item.cuerpoExtraido, item.tipo]);
+  const esRechazada = cuerpo.rechazada || clasificacion.tipoIntencion === 'TRANSACCION_RECHAZADA';
+  const ruta: RutaSync = esRechazada ? 'IGNORAR' : decidirRuta({ ...item, tipo: item.tipo, metodo: item.metodo }, cuerpo);
+  // El cuerpo y el clasificador multicapa mandan sobre el rótulo: rechazada/pago detectados pisan cualquier compra.
+  const tipoIntencion: TipoIntencionCorreo = esRechazada
     ? 'TRANSACCION_RECHAZADA'
     : cuerpo.pagoTarjeta
       ? 'PAGO_ABONO_TARJETA'
       : clasificacion.tipoIntencion;
+  const patronRechazo = cuerpo.patronRechazo ?? clasificacion.patronRechazo ?? null;
   const monto = parseMontoBancolombia(item.valor, moneda);
   const fecha = construirFechaHora(item.fecha, item.hora, snap.offset);
 
@@ -176,6 +179,7 @@ export function analizar(item: ItemNormalizado, snap: SnapshotCorreos): Analisis
     tipoIntencion,
     tipoEvento: tipoIntencion === 'TRANSACCION_RECHAZADA' ? 'RECHAZADO' : tipoIntencion === 'PAGO_ABONO_TARJETA' ? 'PAGO_TARJETA' : ruta === 'COMPRA_TC' ? 'COMPRA_TC' : 'OTRO',
     esCompraValida: ruta === 'COMPRA_TC' && tipoIntencion !== 'TRANSACCION_RECHAZADA' && tipoIntencion !== 'PAGO_ABONO_TARJETA',
+    patronRechazo,
     huella: generarHuellaSincronizacion({
       fecha,
       montoCentavos: monto ? monto.mul(100).toFixed(0) : null,
@@ -310,10 +314,15 @@ export function planificar(item: ItemNormalizado, snap: SnapshotCorreos, opcione
   const pendiente = (motivo: string) => plan(EstadoNotificacionCorreo.PENDIENTE, motivo);
   const anteriorAlCorte = (fecha: Date) => opciones.desde != null && fecha.getTime() < opciones.desde.getTime();
 
+  // Fase 1 (Bloqueo estricto): cualquier transacción rechazada retorna de inmediato sin crear compras ni transacciones.
+  if (a.tipoIntencion === 'TRANSACCION_RECHAZADA' || a.cuerpo.rechazada) {
+    a.ruta = 'IGNORAR';
+    return plan(EstadoNotificacionCorreo.DESCARTADO_RECHAZADO, 'compra_rechazada_o_no_exitosa', { tipo: 'NINGUNA' });
+  }
+
   if (a.ruta === 'IGNORAR') {
     const motivo = motivoIgnorar(item, a.cuerpo) ?? 'aviso_informativo_o_error_de_parseo';
-    // Fase 1: la compra rechazada queda descartada con su propio estado (no contamina compras ni la bandeja de ignorados genérica).
-    if (a.tipoIntencion === 'TRANSACCION_RECHAZADA' || motivo === 'compra_rechazada_o_no_exitosa') {
+    if (motivo === 'compra_rechazada_o_no_exitosa') {
       return plan(EstadoNotificacionCorreo.DESCARTADO_RECHAZADO, 'compra_rechazada_o_no_exitosa');
     }
     return plan(EstadoNotificacionCorreo.IGNORADO, motivo);

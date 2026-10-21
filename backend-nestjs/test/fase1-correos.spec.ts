@@ -1,5 +1,11 @@
 import { Decimal } from '../src/config/decimal.config';
-import { clasificarIntencionCorreo, generarHuellaSincronizacion } from '../src/modules/notificaciones-correo/clasificador-correo.util';
+import {
+  clasificarIntencionCorreo,
+  detectarPatronRechazo,
+  generarHuellaSincronizacion,
+  normalizarTextoCorreoMulticapa,
+} from '../src/modules/notificaciones-correo/clasificador-correo.util';
+import { AuditoriaCorreosService } from '../src/modules/notificaciones-correo/auditoria-correos.service';
 import { decidirRuta } from '../src/modules/notificaciones-correo/bancolombia-normalizer.util';
 import { interpretarCuerpo } from '../src/modules/notificaciones-correo/cuerpo-correo.util';
 import { ItemNormalizado, planificar } from '../src/modules/notificaciones-correo/planificador-correos';
@@ -37,15 +43,26 @@ const item = (extra: Partial<ItemNormalizado> = {}): ItemNormalizado => ({
   ...extra,
 });
 
-describe('Fase 1 — clasificador semántico', () => {
+describe('Fase 1 — clasificador semántico y filtro multicapa de rechazadas', () => {
   it.each([
     'Tu compra en EXITO no fue exitosa por fondos insuficientes',
     'La transacción fue declinada por cupo insuficiente',
     'Intento de compra rechazado: transacción fallida',
-  ])('rechazada: %s', (texto) => {
+    'Bancolombia te informa que tu transacci=C3=B3n rechazada en RAPPI por $45.000',
+    '<div>Compra <b>declinada</b> por c&oacute;digo de seguridad inv&aacute;lido (CVV errado)</div>',
+    'No pudimos procesar tu pago: supera el tope diario permitido',
+    'Operación denegada por tarjeta bloqueada temporalmente',
+  ])('rechazada multicapa: %s', (texto) => {
     expect(clasificarIntencionCorreo([texto]).tipoIntencion).toBe('TRANSACCION_RECHAZADA');
     expect(clasificarIntencionCorreo([texto]).esCompraValida).toBe(false);
+    expect(detectarPatronRechazo([texto])).toBeTruthy();
     expect(interpretarCuerpo(texto).rechazada).toBe(true);
+  });
+
+  it('decodifica quoted-printable y entidades HTML antes de evaluar patrones', () => {
+    const norm = normalizarTextoCorreoMulticapa('Transacci=C3=B3n no aprobada &mdash; c&oacute;digo de seguridad inv&aacute;lido');
+    expect(norm).toContain('transaccion no aprobada');
+    expect(norm).toContain('codigo de seguridad invalido');
   });
 
   it('pago de tarjeta nunca es compra', () => {
@@ -58,13 +75,21 @@ describe('Fase 1 — clasificador semántico', () => {
     expect(plan.accion.tipo).not.toBe('CREAR_COMPRA');
   });
 
-  it('correo rechazado queda DESCARTADO_RECHAZADO y no crea compra', () => {
-    const plan = planificar(
-      item({ tipo: 'Desconocido', cuerpoExtraido: 'Tu compra en EXITO no fue exitosa por fondos insuficientes' }),
+  it('correo rechazado (incluso rotulado Compra TC o con rechazo en asunto/comercio) queda DESCARTADO_RECHAZADO y no crea compra', () => {
+    const planCuerpo = planificar(
+      item({ tipo: 'Compra', metodo: 'Tarjeta Credito', cuerpoExtraido: 'Tu compra en EXITO no fue exitosa por fondos insuficientes' }),
       snap(),
     );
-    expect(plan.estado).toBe('DESCARTADO_RECHAZADO');
-    expect(plan.accion.tipo).toBe('NINGUNA');
+    expect(planCuerpo.estado).toBe('DESCARTADO_RECHAZADO');
+    expect(planCuerpo.accion.tipo).toBe('NINGUNA');
+    expect(planCuerpo.analisis.esCompraValida).toBe(false);
+
+    const planAsunto = planificar(
+      item({ tipo: 'Compra', metodo: 'Tarjeta Credito', asunto: 'Alerta: Transacción declinada en DLO*Didi', cuerpoExtraido: null }),
+      snap(),
+    );
+    expect(planAsunto.estado).toBe('DESCARTADO_RECHAZADO');
+    expect(planAsunto.accion.tipo).toBe('NINGUNA');
   });
 
   it('huella determinista: mismo minuto/monto/últimos4/comercio = misma huella', () => {
@@ -75,6 +100,98 @@ describe('Fase 1 — clasificador semántico', () => {
     expect(a).toBe(b);
     expect(a).not.toBe(c);
     expect(a).toHaveLength(64);
+  });
+});
+
+describe('Fase 1 — auditoría y purga histórica en cascada de rechazados', () => {
+  it('detecta correos rechazados con compras/cuotas/transacciones asociadas y los purga en cascada', async () => {
+    const notifRechazada = {
+      id: 101n,
+      owner_user_id: 1n,
+      asunto: 'Alerta Bancolombia: Compra rechazada',
+      cuerpo_extraido: 'Tu compra en RAPPI por $42.000 no fue exitosa por fondos insuficientes.',
+      fecha_correo: new Date('2026-10-12T15:00:00Z'),
+      monto_original: d(42000),
+      estado_procesamiento: 'CONCILIADO',
+      compra_credito_generada_id: 501n,
+      transaccion_generada_id: 601n,
+      datos_parseados: { comercio: 'RAPPI', tipo: 'Compra' },
+    };
+
+    const prismaMock: Record<string, any> = {
+      notificacionesCorreo: {
+        findMany: jest.fn().mockResolvedValue([notifRechazada]),
+        findFirst: jest.fn().mockResolvedValue(notifRechazada),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      cuentasFinancieras: {
+        findMany: jest.fn().mockResolvedValue([{ id: 1n, nombre: 'Ahorros Bancolombia' }]),
+      },
+      cuotasDetalle: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 1001n, compra: 501n },
+          { id: 1002n, compra: 501n },
+        ]),
+      },
+      responsablesComprasCredito: {
+        findMany: jest.fn().mockResolvedValue([{ id: 2001n, compra_credito: 501n }]),
+      },
+      transacciones: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 601n,
+            estado: 'CONFIRMADO',
+            tipo_transaccion: 'EGRESO',
+            cuenta_origen_id: 1n,
+            cuenta_destino_id: null,
+            monto_cop: d(42000),
+          },
+        ]),
+        findFirst: jest.fn().mockResolvedValue({ id: 601n }),
+        delete: jest.fn().mockResolvedValue({}),
+      },
+      movimientosDeudaPersona: {
+        findMany: jest.fn().mockResolvedValue([{ id: 3001n, cuota_detalle_id: 1001n, responsable_compra_id: 2001n, transaccion_id: null }]),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      comprasCredito: {
+        findFirst: jest.fn().mockResolvedValue({ id: 501n }),
+      },
+      periodosRecurrentes: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>): Promise<unknown> => fn(prismaMock)),
+    };
+
+    const comprasMock = {
+      deleteTx: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const service = new AuditoriaCorreosService(prismaMock as never, comprasMock as never, {} as never);
+
+    // 1. Dry-run
+    const preview = await service.auditarYLimpiarRechazadosHistoricos(1n, false);
+    expect(preview.ejecutado).toBe(false);
+    expect(preview.correosRechazadosDetectados).toBe(1);
+    expect(preview.comprasCreditoEliminadas).toBe(1);
+    expect(preview.cuotasEliminadas).toBe(2);
+    expect(preview.responsablesEliminados).toBe(1);
+    expect(preview.movimientosDeudaEliminados).toBe(1);
+    expect(preview.transaccionesEliminadas).toBe(1);
+    expect(preview.saldosCuentasRestaurados).toEqual([
+      { cuentaId: 1, nombreCuenta: 'Ahorros Bancolombia', diferenciaRestaurada: '42000.00' },
+    ]);
+    expect(comprasMock.deleteTx).not.toHaveBeenCalled();
+
+    // 2. Ejecución de purga en cascada
+    const purga = await service.auditarYLimpiarRechazadosHistoricos(1n, true);
+    expect(purga.ejecutado).toBe(true);
+    expect(purga.correosActualizadosADescartado).toBe(1);
+    expect(purga.comprasCreditoEliminadas).toBe(1);
+    expect(purga.transaccionesEliminadas).toBe(1);
+    expect(comprasMock.deleteTx).toHaveBeenCalledWith(prismaMock, 501, 1n, { desdeDeshacer: true });
+    expect(prismaMock.transacciones.delete).toHaveBeenCalledWith({ where: { id: 601n } });
   });
 });
 

@@ -106,6 +106,23 @@ export class NotificacionesCorreoController {
     return this.reproceso.reprocesar(dto, userId);
   }
 
+  @Get('auditoria-rechazados')
+  @ApiOperation({
+    summary: 'Auditoría en seco de correos rechazados históricos y sus registros asociados (ComprasCredito, CuotasDetalle, Responsables, Sub-ledger, Transacciones)',
+  })
+  auditarRechazadosHistoricos(@CurrentUser('userId') userId: bigint) {
+    return this.auditoria.auditarYLimpiarRechazadosHistoricos(userId, false);
+  }
+
+  @Post('purgar-rechazados-historicos')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Purga en cascada los registros asociados a correos rechazados históricos y marca las notificaciones como DESCARTADO_RECHAZADO',
+  })
+  purgarRechazadosHistoricos(@Body() body: { ids?: number[] }, @CurrentUser('userId') userId: bigint) {
+    return this.auditoria.auditarYLimpiarRechazadosHistoricos(userId, true, body?.ids);
+  }
+
   @Post('auditar-falsos-positivos')
   @HttpCode(200)
   @ApiOperation({ summary: 'Preview de falsos positivos históricos: compras que eran pagos de tarjeta o compras rechazadas (Fase 1)' })

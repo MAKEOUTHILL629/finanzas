@@ -16,6 +16,8 @@ export const V2_ALIASES: Array<[RegExp, string]> = [
   [/^\/api\/v2\/periodos-recurrentes\/proyectar(?=[/?]|$)/, '/api/recurrentes/proyectar-mes'],
   [/^\/api\/v2\/periodos-recurrentes\/(\d+)\/registrar-pago(?=[/?]|$)/, '/api/recurrentes/periodos/$1/pagar'],
   [/^\/api\/v2\/periodos-recurrentes(?=[/?]|$)/, '/api/recurrentes/periodos'],
+  [/^\/api\/v2\/correos(?=[/?]|$)/, '/api/notificaciones-correo'],
+  [/^\/api\/correos(?=[/?]|$)/, '/api/notificaciones-correo'],
   [/^\/api\/v2\//, '/api/'],
   [/^\/api\/v1\//, '/api/'],
 ];

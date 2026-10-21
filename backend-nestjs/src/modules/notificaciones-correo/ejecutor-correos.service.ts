@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { Decimal } from '../../config/decimal.config';
-import { EstadoTransaccion } from '../../common/enums/finance.enums';
+import { EstadoNotificacionCorreo, EstadoTransaccion } from '../../common/enums/finance.enums';
 import { money, rate, toDecimal } from '../../common/utils/decimal.util';
 import { PrismaService } from '../../prisma/prisma.service';
 import { cuentasConDebitos, soloCredito } from '../tarjetas/tipos-tarjeta.util';
@@ -200,6 +200,8 @@ export class EjecutorCorreosService {
   /** `datos_parseados` de la notificación: el contrato original + lo que el planificador dedujo. */
   datosParseados(item: ItemNormalizado, plan: Plan): Prisma.InputJsonObject {
     const a = plan.analisis;
+    const motivoRechazo =
+      a.patronRechazo ?? (plan.estado === EstadoNotificacionCorreo.DESCARTADO_RECHAZADO ? plan.motivo : null);
     return {
       tipo: item.tipo,
       metodo: item.metodo,
@@ -220,6 +222,7 @@ export class EjecutorCorreosService {
       es_compra_valida: a.esCompraValida,
       huella_sincronizacion: a.huella,
       confianza_resolucion: a.confianzaResolucion,
+      ...(motivoRechazo ? { motivo_rechazo: motivoRechazo } : {}),
       ...(plan.plantilla ? { plantilla: { ...plan.plantilla } } : {}),
       ...(a.personaId !== null ? { persona_id: Number(a.personaId) } : {}),
     };
@@ -257,6 +260,14 @@ export class EjecutorCorreosService {
   }
 
   private async ejecutarAccion(tx: Prisma.TransactionClient, item: ItemNormalizado, plan: Plan, ownerUserId: bigint): Promise<IdsCreados> {
+    // Fase 1: bloqueo duro en el ejecutor — jamás persistir compra ni transacción si el correo fue rechazado.
+    if (
+      plan.estado === EstadoNotificacionCorreo.DESCARTADO_RECHAZADO ||
+      plan.analisis.tipoIntencion === 'TRANSACCION_RECHAZADA' ||
+      plan.analisis.cuerpo?.rechazada
+    ) {
+      return { compraId: null, transaccionId: null };
+    }
     const accion = plan.accion;
     switch (accion.tipo) {
       case 'CREAR_COMPRA': {

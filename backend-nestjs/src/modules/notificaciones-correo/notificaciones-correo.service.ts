@@ -17,6 +17,8 @@ import { ComprasCreditoService, TX_OPTIONS } from '../compras-credito/compras-cr
 import { ResponsablesService } from '../compras-credito/responsables.service';
 import { PrestamosService } from '../prestamos/prestamos.service';
 import { TransaccionesService } from '../transacciones/transacciones.service';
+import { clasificarIntencionCorreo } from './clasificador-correo.util';
+import { interpretarCuerpo } from './cuerpo-correo.util';
 import { ConciliarCorreoDto, IngestaCorreoDto, NotificacionesFiltroDto } from './dto/notificacion.dto';
 import { insertarNotificacionIdempotente, resolverTrmUsd } from './notificaciones.repository';
 
@@ -133,6 +135,35 @@ export class NotificacionesCorreoService {
       }
 
       const interpretado = interpretarDatosParseados(dto.datos_parseados);
+      const cuerpo = interpretarCuerpo(dto.cuerpo_extraido);
+      const clasif = clasificarIntencionCorreo([dto.asunto, interpretado.comercio, dto.cuerpo_extraido]);
+      const esRechazada = cuerpo.rechazada || clasif.tipoIntencion === 'TRANSACCION_RECHAZADA';
+
+      if (esRechazada) {
+        const motivoRechazo = cuerpo.patronRechazo ?? clasif.patronRechazo ?? 'compra_rechazada_o_no_exitosa';
+        const datosActualizados = {
+          ...(dto.datos_parseados ?? {}),
+          es_compra_valida: false,
+          tipo_intencion: 'TRANSACCION_RECHAZADA',
+          motivo_rechazo: motivoRechazo,
+        } as Prisma.InputJsonObject;
+        const notificacion = await tx.notificacionesCorreo.update({
+          where: { id: notificacionId },
+          data: {
+            estado_procesamiento: EstadoNotificacionCorreo.DESCARTADO_RECHAZADO,
+            transaccion_generada_id: null,
+            compra_credito_generada_id: null,
+            datos_parseados: datosActualizados,
+          },
+        });
+        return {
+          duplicado: false,
+          id: Number(notificacion.id),
+          estadoProcesamiento: notificacion.estado_procesamiento,
+          transaccionGeneradaId: null,
+        };
+      }
+
       let estado: EstadoNotificacionCorreo = EstadoNotificacionCorreo.PENDIENTE;
       let transaccion: Transacciones | null = null;
 

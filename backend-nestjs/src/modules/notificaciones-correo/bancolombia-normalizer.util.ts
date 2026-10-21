@@ -1,5 +1,6 @@
 import { Decimal } from '../../config/decimal.config';
 import { tryToDecimal } from '../../common/utils/decimal.util';
+import { detectarPatronRechazo } from './clasificador-correo.util';
 import { InterpretacionCuerpo } from './cuerpo-correo.util';
 
 /**
@@ -10,7 +11,7 @@ import { InterpretacionCuerpo } from './cuerpo-correo.util';
 export type RutaSync = 'IGNORAR' | 'COMPRA_TC' | 'PAGO_TARJETA' | 'INGRESO' | 'EGRESO' | 'SIN_RUTA';
 export type Instrumento = 'TC' | 'CUENTA';
 
-const sinTildes = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '');
+const sinTildes = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
 /**
  * Últimos 4 dígitos de un producto. Unifica todas las variantes que emite el banco:
@@ -54,14 +55,16 @@ export interface ItemParaRuteo {
  * el Apps Script deja como «Desconocido»: compras rechazadas por fondos insuficientes y avisos de inscripción.
  */
 export function motivoIgnorar(item: ItemParaRuteo, cuerpo?: InterpretacionCuerpo | null): string | null {
+  if (cuerpo?.rechazada || detectarPatronRechazo([item.asunto, item.comercio, item.tipo]) !== null) {
+    return 'compra_rechazada_o_no_exitosa';
+  }
   if (item.esErrorParsing === true || esAvisoInformativo(item.asunto) || cuerpo?.informativo) return 'aviso_informativo_o_error_de_parseo';
-  if (cuerpo?.rechazada) return 'compra_rechazada_o_no_exitosa';
   return null;
 }
 
 /**
  * Enrutamiento transaccional del plan:
- *  1. error de parseo, aviso informativo o compra rechazada → IGNORAR  (estado_procesamiento = IGNORADO)
+ *  1. error de parseo, aviso informativo o compra rechazada → IGNORAR  (estado_procesamiento = IGNORADO / DESCARTADO_RECHAZADO)
  *  2. Compra/Avance con tarjeta de crédito (cualquier método) → COMPRA_TC (ComprasCredito)
  *  3. Pago Tarjeta | Abono Tarjeta | Abono Deuda    → PAGO_TARJETA (con deduplicación ±5 min)
  *  4. Ingreso | Pago Proveedor | transferencia recibida (cuerpo) → INGRESO
