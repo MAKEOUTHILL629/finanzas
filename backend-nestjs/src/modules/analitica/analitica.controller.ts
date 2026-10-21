@@ -17,7 +17,7 @@ class ActualizarTagsDto {
 
 @ApiTags('Analítica y tags')
 @ApiBearerAuth()
-@Controller('api/v2/analitica')
+@Controller('api/analitica')
 export class AnaliticaController {
   constructor(private readonly analitica: AnaliticaService) {}
 

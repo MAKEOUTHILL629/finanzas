@@ -129,8 +129,19 @@ describe('Paridad de rutas con conf/routes', () => {
       '/api/v2/dashboard/flujo-caja?periodo=2026-10',
       '/api/v2/obligaciones-mes/1/aportes-dia',
       '/api/v2/obligaciones-aportes/carro/resumen',
+      '/api/v2/obligaciones-aportes/carro/resumen-whatsapp',
+      '/api/obligaciones-aportes/carro/resumen-whatsapp',
       '/api/v2/recurrentes-persona',
       '/api/v2/liquidacion-mensual/2026-10',
+      '/api/analitica/consulta?q=rappi',
+      '/api/v2/analitica/consulta?q=rappi',
+      '/api/analitica/tags',
+      '/api/v2/analitica/tags',
+      '/api/recurrentes/radar',
+      '/api/liquidacion-mensual/2026-10/bilateral?personaId=1',
+      '/api/eventos-grupales',
+      '/api/compras-credito/1/cuotas-colaborativas',
+      '/api/prestamos/1/abonos',
     ]) {
       const res = await http.get(ruta);
       expect([ruta, res.status]).toEqual([ruta, 401]);
@@ -161,6 +172,18 @@ describe('Paridad de rutas con conf/routes', () => {
       ['post', '/api/liquidacion-mensual/cruce-entre-personas'],
       ['post', '/api/liquidacion-mensual/registrar-pago'],
       ['post', '/api/v2/obligaciones-aportes/aportes-diarios'],
+      ['post', '/api/notificaciones-correo/auditar-falsos-positivos'],
+      ['post', '/api/notificaciones-correo/revertir-falsos-positivos'],
+      ['post', '/api/analitica/retag-historico'],
+      ['post', '/api/v2/analitica/retag-historico'],
+      ['post', '/api/analitica/tags'],
+      ['post', '/api/v2/analitica/tags'],
+      ['post', '/api/recurrentes/radar/marcar-cancelar'],
+      ['post', '/api/liquidacion-mensual/2026-10/cerrar-cruce'],
+      ['post', '/api/liquidacion-mensual/2026-10/multa'],
+      ['post', '/api/eventos-grupales'],
+      ['post', '/api/compras-credito/cuotas/1/aportes'],
+      ['post', '/api/prestamos/1/abonos-con-comprobante'],
     ] as const) {
       const res = await (http as any)[metodo](ruta).send({});
       expect([metodo, ruta, res.status === 404]).toEqual([metodo, ruta, false]);
