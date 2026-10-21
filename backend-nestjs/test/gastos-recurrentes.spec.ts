@@ -57,6 +57,82 @@ describe('GastosRecurrentesService', () => {
     });
   });
 
+  describe('crearDesdeMovimiento (Iteración 3 · Fase 4)', () => {
+    const compra = (extra: Record<string, unknown> = {}) => ({
+      id: 101n,
+      concepto: 'NETFLIX',
+      comercio_canonico: 'Netflix',
+      fecha_compra: new Date('2026-09-07T00:00:00Z'),
+      valor_compra: dec(45000),
+      pago_mensual: dec(45000),
+      numero_cuotas: 1,
+      tarjeta: 2n,
+      tags: [] as string[],
+      ...extra,
+    });
+
+    function prepararCompra(prisma: any) {
+      prisma.comprasCredito.findMany.mockResolvedValue([compra()]);
+      prisma.plantillasRecurrentes.findMany.mockResolvedValue([]);
+      prisma.plantillasRecurrentes.create.mockResolvedValue({ id: 9n, nombre: 'Netflix', frecuencia: 'MENSUAL' });
+      prisma.comprasCredito.update.mockResolvedValue({});
+      prisma.periodosRecurrentes.findFirst.mockResolvedValue(null);
+      prisma.periodosRecurrentes.create.mockResolvedValue({ id: 31n });
+    }
+
+    it('crea la plantilla desde la compra, le pone el tag #recurrente y la enlaza como periodo PAGADO de su mes', async () => {
+      const { prisma, service } = setup();
+      prepararCompra(prisma);
+
+      const r = await service.crearDesdeMovimiento({ origenTipo: 'COMPRA_CREDITO', origenIds: [101] } as any, OWNER);
+
+      expect(r).toMatchObject({ plantillaId: 9, nombre: 'Netflix', plantillaCreada: true, vinculadosOrigen: 1, totalVinculados: 1 });
+      const creada = prisma.plantillasRecurrentes.create.mock.calls[0][0].data;
+      expect(creada).toMatchObject({ nombre: 'Netflix', frecuencia: 'MENSUAL', dia_vencimiento_estimado: 7, tarjeta_credito_default_id: 2n });
+      expect(creada.monto_base_estimado.toString()).toBe('45000');
+      expect(prisma.comprasCredito.update.mock.calls[0][0].data.tags).toContain('#recurrente');
+      const periodo = prisma.periodosRecurrentes.create.mock.calls[0][0].data;
+      expect(periodo).toMatchObject({ plantilla_recurrente_id: 9n, periodo: '2026-09', estado: 'PAGADO', compra_credito_pago_id: 101n });
+    });
+
+    it('reutiliza la plantilla activa del mismo comercio y vincula históricos similares en lote', async () => {
+      const { prisma, service } = setup();
+      prepararCompra(prisma);
+      prisma.plantillasRecurrentes.findMany.mockResolvedValue([{ id: 9n, nombre: 'netflix', frecuencia: 'MENSUAL' }]);
+      prisma.comprasCredito.findMany
+        .mockResolvedValueOnce([compra()])
+        .mockResolvedValueOnce([compra(), compra({ id: 102n, fecha_compra: new Date('2026-08-07T00:00:00Z') })]);
+      prisma.transacciones.findMany.mockResolvedValue([]);
+
+      const r = await service.crearDesdeMovimiento({ origenTipo: 'COMPRA_CREDITO', origenIds: [101], vincularHistoricoSimilar: true } as any, OWNER);
+
+      expect(prisma.plantillasRecurrentes.create).not.toHaveBeenCalled();
+      expect(r.plantillaCreada).toBe(false);
+      expect(r.historicosVinculados).toEqual({ compras: 1, transacciones: 0 });
+      expect(r.totalVinculados).toBe(2);
+    });
+
+    it('desde una transacción usa su cuenta/categoría; un id ajeno o inexistente → 404 y tipo inválido → 400', async () => {
+      const { prisma, service } = setup();
+      prisma.transacciones.findMany.mockResolvedValue([
+        { id: 55n, concepto: 'Pago Spotify', comercio_canonico: 'Spotify', fecha_transaccion: new Date('2026-09-03T00:00:00Z'), monto_cop: dec(16900), cuenta_origen_id: 3n, categoria_id: 4n, tags: [] },
+      ]);
+      prisma.plantillasRecurrentes.findMany.mockResolvedValue([]);
+      prisma.plantillasRecurrentes.create.mockResolvedValue({ id: 10n, nombre: 'Spotify', frecuencia: 'MENSUAL' });
+      prisma.transacciones.update.mockResolvedValue({});
+      prisma.periodosRecurrentes.findFirst.mockResolvedValue(null);
+      prisma.periodosRecurrentes.create.mockResolvedValue({ id: 32n });
+
+      const r = await service.crearDesdeMovimiento({ origenTipo: 'TRANSACCION', origenIds: [55], frecuencia: 'MENSUAL' as any }, OWNER);
+      expect(r.plantillaId).toBe(10);
+      expect(prisma.plantillasRecurrentes.create.mock.calls[0][0].data).toMatchObject({ cuenta_debito_default_id: 3n, categoria_id: 4n });
+
+      prisma.transacciones.findMany.mockResolvedValue([]);
+      await expect(service.crearDesdeMovimiento({ origenTipo: 'TRANSACCION', origenIds: [999] } as any, OWNER)).rejects.toMatchObject({ status: 404 });
+      await expect(service.crearDesdeMovimiento({ origenTipo: 'OTRO', origenIds: [1] } as any, OWNER)).rejects.toMatchObject({ status: 400 });
+    });
+  });
+
   describe('registrarPago', () => {
     const periodo = (extra: Record<string, unknown> = {}) => ({
       id: 30n,

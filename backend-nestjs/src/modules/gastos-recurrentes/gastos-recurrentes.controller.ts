@@ -16,6 +16,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import {
   CreatePlantillaRecurrenteDto,
+  DesdeMovimientoDto,
   ProyectarPeriodoDto,
   RegistrarPagoPeriodoDto,
   UpdatePlantillaRecurrenteDto,
@@ -70,6 +71,20 @@ export class PlantillasRecurrentesController {
   @ApiOperation({ summary: 'Elimina la plantilla (o la desactiva si ya tiene periodos generados)' })
   remove(@Param('id', ParseIntPipe) id: number, @CurrentUser('userId') userId: bigint) {
     return this.recurrentes.removePlantilla(id, userId);
+  }
+}
+
+@ApiTags('Gastos recurrentes')
+@ApiBearerAuth()
+@Controller('api/gastos-recurrentes')
+export class GastosRecurrentesDesdeMovimientoController {
+  constructor(private readonly recurrentes: GastosRecurrentesService) {}
+
+  @Post('desde-movimiento')
+  @HttpCode(201)
+  @ApiOperation({ summary: 'Convierte compras/transacciones (individual o lote) en un pago recurrente y vincula históricos similares' })
+  desdeMovimiento(@Body() dto: DesdeMovimientoDto, @CurrentUser('userId') userId: bigint) {
+    return this.recurrentes.crearDesdeMovimiento(dto, userId);
   }
 }
 

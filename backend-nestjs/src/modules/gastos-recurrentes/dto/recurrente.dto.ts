@@ -210,6 +210,42 @@ export class RegistrarPagoPeriodoDto {
   compraCreditoPagoId?: number;
 }
 
+/** Fase 4 (Iteración 3): convertir compras/transacciones existentes en un pago recurrente. */
+export class DesdeMovimientoDto {
+  @ApiProperty({ enum: ['COMPRA_CREDITO', 'TRANSACCION'], example: 'COMPRA_CREDITO' })
+  @IsString()
+  origenTipo: 'COMPRA_CREDITO' | 'TRANSACCION';
+
+  @ApiProperty({ type: [Number], example: [101, 102], description: 'Movimientos origen (individual o lote); el primero siembra la plantilla' })
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsInt({ each: true })
+  @IsPositive({ each: true })
+  origenIds: number[];
+
+  @ApiPropertyOptional({ enum: FrecuenciaRecurrente, example: FrecuenciaRecurrente.MENSUAL })
+  @IsOptional()
+  @IsEnum(FrecuenciaRecurrente)
+  frecuencia?: FrecuenciaRecurrente;
+
+  @ApiPropertyOptional({ example: 7, minimum: 1, maximum: 31, description: 'Día de cobro estimado; por defecto, el día del movimiento origen' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(31)
+  diaCobroEstimado?: number;
+
+  @ApiPropertyOptional({ description: 'true si el monto cambia cada mes' })
+  @IsOptional()
+  @IsBoolean()
+  esMontoVariable?: boolean;
+
+  @ApiPropertyOptional({ example: true, description: 'Vincula también los pagos históricos del mismo comercio/destinatario' })
+  @IsOptional()
+  @IsBoolean()
+  vincularHistoricoSimilar?: boolean;
+}
+
 export class ProyectarPeriodoDto {
   @ApiProperty({ example: '2026-11' })
   @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'periodo debe tener formato YYYY-MM' })

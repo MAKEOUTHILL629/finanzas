@@ -8,7 +8,7 @@ import {
   OrigenRegistro,
   TipoTransaccion,
 } from '../../common/enums/finance.enums';
-import { isValidPeriodo } from '../../common/utils/date.util';
+import { isValidPeriodo, periodoOf } from '../../common/utils/date.util';
 import { money, rate, sumDecimals, toDb, toDbMoney, toDecimal } from '../../common/utils/decimal.util';
 import { datosInvalidos } from '../../common/utils/legacy-http.util';
 import {
@@ -20,11 +20,12 @@ import {
   assertTarjeta,
 } from '../../common/utils/ownership.util';
 import { PrismaService } from '../../prisma/prisma.service';
-import { normalizarComercio } from '../notificaciones-correo/comercio.util';
+import { normalizarComercio, normalizarTags } from '../notificaciones-correo/comercio.util';
 import { TransaccionesService } from '../transacciones/transacciones.service';
 import { CargoSerie, detectarCandidatos } from './detector-recurrentes.util';
 import {
   CreatePlantillaRecurrenteDto,
+  DesdeMovimientoDto,
   RegistrarPagoPeriodoDto,
   ResponsableRecurrenteDto,
   UpdatePlantillaRecurrenteDto,
@@ -359,6 +360,137 @@ export class GastosRecurrentesService {
       },
     });
     return { comercio: nombre, estado: 'PENDIENTE_CANCELACION' };
+  }
+
+  // ───────────────────────────── desde un movimiento (Iteración 3 · Fase 4) ─────────────────────────────
+
+  /**
+   * Convierte compras/transacciones existentes en un pago recurrente: crea (o reutiliza, por nombre normalizado) la plantilla,
+   * marca los movimientos con el tag `#recurrente` y los enlaza como el periodo pagado de su mes (`PeriodosRecurrentes`).
+   * Sin columnas nuevas: el vínculo vive en la plantilla/periodos y el tag transversal (ver PARTE A, numeración SQL).
+   */
+  async crearDesdeMovimiento(dto: DesdeMovimientoDto, ownerUserId: bigint) {
+    if (dto.origenTipo !== 'COMPRA_CREDITO' && dto.origenTipo !== 'TRANSACCION') {
+      throw datosInvalidos({ origenTipo: ['origenTipo debe ser COMPRA_CREDITO o TRANSACCION'] });
+    }
+    const ids = [...new Set(dto.origenIds)];
+    if (ids.length === 0) throw datosInvalidos({ origenIds: ['Indica al menos un movimiento'] });
+
+    return this.prisma.$transaction(async (tx) => {
+      const esCompra = dto.origenTipo === 'COMPRA_CREDITO';
+      const compras = esCompra
+        ? await tx.comprasCredito.findMany({ where: { id: { in: ids.map((i) => BigInt(i)) }, owner_user_id: ownerUserId } })
+        : [];
+      const transacciones = esCompra
+        ? []
+        : await tx.transacciones.findMany({ where: { id: { in: ids.map((i) => BigInt(i)) }, owner_user_id: ownerUserId } });
+      const encontrados = esCompra ? compras.length : transacciones.length;
+      if (encontrados !== ids.length) {
+        throw new NotFoundException(`Algún movimiento de [${ids.join(', ')}] no existe o no es tuyo`);
+      }
+
+      const porId = new Map<string, (typeof compras)[number] | (typeof transacciones)[number]>();
+      for (const m of [...compras, ...transacciones]) porId.set(String(m.id), m);
+      const ordenados = ids.map((i) => porId.get(String(i))!);
+      const semilla = ordenados[0] as (typeof compras)[number] & (typeof transacciones)[number];
+      const nombreSemilla = (esCompra ? (semilla.comercio_canonico ?? semilla.concepto) : (semilla.comercio_canonico ?? semilla.concepto)) ?? 'Pago recurrente';
+      const fechaSemilla: Date = esCompra ? (semilla.fecha_compra ?? new Date()) : semilla.fecha_transaccion;
+      const montoSemilla = esCompra
+        ? toDecimal(semilla.pago_mensual ?? (semilla.valor_compra && semilla.numero_cuotas ? toDecimal(semilla.valor_compra).div(semilla.numero_cuotas) : semilla.valor_compra ?? 0))
+        : toDecimal(semilla.monto_cop);
+
+      const clave = normalizarComercio(nombreSemilla);
+      const plantillas = await tx.plantillasRecurrentes.findMany({ where: { owner_user_id: ownerUserId, is_active: true } });
+      let plantilla = plantillas.find((p) => normalizarComercio(p.nombre) === clave) ?? null;
+      let plantillaCreada = false;
+      if (!plantilla) {
+        plantilla = await tx.plantillasRecurrentes.create({
+          data: {
+            owner_user_id: ownerUserId,
+            nombre: nombreSemilla.slice(0, 120),
+            categoria_id: esCompra ? null : semilla.categoria_id,
+            frecuencia: dto.frecuencia ?? FrecuenciaRecurrente.MENSUAL,
+            dia_vencimiento_estimado: dto.diaCobroEstimado ?? fechaSemilla.getUTCDate(),
+            es_monto_variable: dto.esMontoVariable ?? false,
+            moneda: 'COP',
+            monto_base_estimado: toDbMoney(montoSemilla),
+            cuenta_debito_default_id: esCompra ? null : semilla.cuenta_origen_id,
+            tarjeta_credito_default_id: esCompra ? semilla.tarjeta : null,
+            is_active: true,
+          },
+        });
+        plantillaCreada = true;
+      }
+
+      const vincular = async (mov: (typeof compras)[number] & (typeof transacciones)[number], tipo: 'COMPRA_CREDITO' | 'TRANSACCION'): Promise<boolean> => {
+        const tags = normalizarTags([...(mov.tags ?? []), '#recurrente']);
+        const fecha: Date = tipo === 'COMPRA_CREDITO' ? (mov.fecha_compra ?? fechaSemilla) : mov.fecha_transaccion;
+        const monto = tipo === 'COMPRA_CREDITO'
+          ? toDecimal(mov.pago_mensual ?? (mov.valor_compra && mov.numero_cuotas ? toDecimal(mov.valor_compra).div(mov.numero_cuotas) : mov.valor_compra ?? 0))
+          : toDecimal(mov.monto_cop);
+        if (tipo === 'COMPRA_CREDITO') {
+          await tx.comprasCredito.update({ where: { id: mov.id }, data: { tags } });
+        } else {
+          await tx.transacciones.update({ where: { id: mov.id }, data: { tags } });
+        }
+        const periodo = periodoOf(fecha);
+        const previo = await tx.periodosRecurrentes.findFirst({ where: { plantilla_recurrente_id: plantilla!.id, periodo } });
+        if (!previo) {
+          await tx.periodosRecurrentes.create({
+            data: {
+              plantilla_recurrente_id: plantilla!.id,
+              owner_user_id: ownerUserId,
+              periodo,
+              fecha_estimada_pago: fecha,
+              monto_pronosticado: toDbMoney(monto),
+              monto_real_pagado: toDbMoney(monto),
+              estado: EstadoPeriodoRecurrente.PAGADO,
+              compra_credito_pago_id: tipo === 'COMPRA_CREDITO' ? mov.id : null,
+              transaccion_pago_id: tipo === 'TRANSACCION' ? mov.id : null,
+            },
+          });
+        } else if (tipo === 'COMPRA_CREDITO' && !previo.compra_credito_pago_id) {
+          await tx.periodosRecurrentes.update({ where: { id: previo.id }, data: { compra_credito_pago_id: mov.id } });
+        } else if (tipo === 'TRANSACCION' && !previo.transaccion_pago_id) {
+          await tx.periodosRecurrentes.update({ where: { id: previo.id }, data: { transaccion_pago_id: mov.id } });
+        }
+        return true;
+      };
+
+      let vinculadosOrigen = 0;
+      for (const mov of ordenados) {
+        if (await vincular(mov as never, dto.origenTipo)) vinculadosOrigen++;
+      }
+
+      let historicosCompras = 0;
+      let historicosTransacciones = 0;
+      if (dto.vincularHistoricoSimilar) {
+        const comercio = esCompra ? semilla.comercio_canonico : semilla.comercio_canonico;
+        if (comercio) {
+          const yaIds = new Set(ids.map(String));
+          const similaresCompras = await tx.comprasCredito.findMany({ where: { owner_user_id: ownerUserId, comercio_canonico: comercio } });
+          for (const m of similaresCompras) {
+            if (yaIds.has(String(m.id))) continue;
+            if (await vincular(m as never, 'COMPRA_CREDITO')) historicosCompras++;
+          }
+          const similaresTx = await tx.transacciones.findMany({ where: { owner_user_id: ownerUserId, comercio_canonico: comercio } });
+          for (const m of similaresTx) {
+            if (esCompra === false && yaIds.has(String(m.id))) continue;
+            if (await vincular(m as never, 'TRANSACCION')) historicosTransacciones++;
+          }
+        }
+      }
+
+      return {
+        plantillaId: Number(plantilla.id),
+        nombre: plantilla.nombre,
+        plantillaCreada,
+        frecuencia: plantilla.frecuencia,
+        vinculadosOrigen,
+        historicosVinculados: { compras: historicosCompras, transacciones: historicosTransacciones },
+        totalVinculados: vinculadosOrigen + historicosCompras + historicosTransacciones,
+      };
+    });
   }
 
   // ───────────────────────────── helpers ─────────────────────────────
