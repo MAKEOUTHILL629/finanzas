@@ -21,6 +21,13 @@ export class AportesCarroController {
     return this.aportes.resumenCarro(userId, { tipo, periodo });
   }
 
+  @Get('carro/resumen-whatsapp')
+  @ApiQuery({ name: 'periodo', required: false, example: '2026-10' })
+  @ApiOperation({ summary: 'Último aporte y consolidado del mes listos para el WhatsApp a Papá (Fase 7)' })
+  resumenWhatsApp(@CurrentUser('userId') userId: bigint, @Query('periodo') periodo?: string) {
+    return this.aportes.resumenWhatsApp(userId, periodo);
+  }
+
   @Post('periodos')
   @HttpCode(201)
   @ApiOperation({ summary: 'Crea o configura la cuota objetivo de un mes (si el mes ya existe, actualiza su cuota)' })

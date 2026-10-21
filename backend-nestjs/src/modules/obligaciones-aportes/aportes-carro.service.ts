@@ -112,6 +112,47 @@ export class AportesCarroService {
     };
   }
 
+  /**
+   * Datos listos para el mensaje de WhatsApp a Papá (Fase 7): último aporte del periodo elegido
+   * y consolidado del mes calculado con `aportes-carro.calc` (vía resumenCarro).
+   */
+  async resumenWhatsApp(ownerUserId: bigint, periodoPedido?: string) {
+    const resumen = await this.resumenCarro(ownerUserId, { periodo: periodoPedido });
+    const periodo = resumen.periodos.find((p) => p.id === resumen.periodoSeleccionadoId) ?? resumen.periodos[0] ?? null;
+    if (!periodo) return { periodo: periodoPedido ?? resumen.periodoActual, ultimoAporte: null, resumenPeriodo: null, responsable: resumen.responsable };
+    const porPersona = new Map<string, Decimal>();
+    let ultimo: { fecha: string; aportante: string; monto: Decimal; concepto: string | null } | null = null;
+    for (const dia of periodo.aportes) {
+      for (const d of dia.detalles) {
+        const nombre = d.personaNombre ?? '—';
+        porPersona.set(nombre, (porPersona.get(nombre) ?? new Decimal(0)).plus(toDecimal(d.valor)));
+        if (!ultimo) {
+          ultimo = { fecha: dia.fecha.toISOString().slice(0, 10), aportante: nombre, monto: toDecimal(d.valor), concepto: d.comentarios ?? dia.notas };
+        }
+      }
+    }
+    const personaTel = periodo.responsable
+      ? await this.prisma.personas.findFirst({
+          where: { id: periodo.responsable.id, owner_user_id: ownerUserId },
+          select: { numero_celular: true },
+        })
+      : null;
+    return {
+      periodo: periodo.periodo,
+      nombrePeriodoMes: nombrePeriodo(periodo.periodo),
+      responsable: periodo.responsable ? { ...periodo.responsable, telefono: personaTel?.numero_celular ?? null } : null,
+      ultimoAporte: ultimo ? { ...ultimo, monto: money(ultimo.monto) } : null,
+      resumenPeriodo: {
+        nombrePeriodoMes: nombrePeriodo(periodo.periodo),
+        metaMes: periodo.valorCuotaObjetivo,
+        totalRecaudadoMes: periodo.montoAbonado,
+        desglosePorPersona: [...porPersona.entries()].map(([nombre, monto]) => ({ nombre, monto: money(monto) })).sort((a, b) => b.monto.comparedTo(a.monto)),
+        excedenteAcumulado: periodo.saldoAFavorDisponible,
+        saldoFaltanteMes: periodo.saldoPendiente,
+      },
+    };
+  }
+
   // ───────────────────────────── Periodos ─────────────────────────────
 
   /** `POST /periodos`: crea el periodo del mes o actualiza su cuota objetivo. */
