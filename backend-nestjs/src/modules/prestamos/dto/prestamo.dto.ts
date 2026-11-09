@@ -4,7 +4,6 @@ import {
   IsBoolean,
   IsEnum,
   IsInt,
-  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
@@ -24,8 +23,10 @@ const FECHA_MSG = 'La fecha debe tener formato yyyy-MM-dd';
 
 /** `POST /api/prestamos` (contrato legacy) y `POST /api/v2/prestamos` (con campos ERP opcionales). */
 export class CreatePrestamoDto {
+  // Número o texto decimal ("30000.50"): el front lo manda como texto para no perder precisión. `@IsNumber()` rechazaba el texto.
+  // Que sea > 0 lo valida el servicio.
   @ApiProperty({ example: 500000 })
-  @IsNumber()
+  @IsMoney()
   valorPrestado: number | string;
 
   @ApiProperty({ example: 'Préstamo para viaje' })
@@ -86,7 +87,7 @@ export class CreatePrestamoDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsNumber()
+  @IsMoney()
   cuotaMensualAcordada?: number | string;
 
   @ApiPropertyOptional({ description: 'Iteración 2 Fase 5: ID de la transacción de transferencia/egreso existente vinculada al préstamo' })
@@ -120,10 +121,10 @@ export class UpdatePrestamoDto {
   @IsEnum(EstadoPrestamo)
   estado?: EstadoPrestamo;
 
-  @ApiPropertyOptional({ description: 'Saldo pendiente tras abonos parciales' })
+  @ApiPropertyOptional({ description: 'Saldo pendiente tras abonos parciales (número o texto decimal)' })
   @IsOptional()
-  @IsNumber()
-  saldoPendiente?: number;
+  @IsMoney()
+  saldoPendiente?: number | string;
 
   @ApiPropertyOptional()
   @IsOptional()
